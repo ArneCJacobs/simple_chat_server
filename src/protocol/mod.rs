@@ -31,13 +31,23 @@ pub trait HasServerConnection {
     fn get_server_socket(&mut self) -> &mut TcpStream;
 
     async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> Result<ProtocolPackage> {
+        self.send_package(message).await?;
+        self.receive_package().await
+    }
+
+    async fn receive_package(&mut self) -> Result<ProtocolPackage> {
         let socket = self.get_server_socket();
-        let serialized = bincode::serialize(&message)?;
-        socket.write_all(&serialized).await?;
         let mut buffer = Vec::new();
         socket.read_to_end(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
         Ok(received_message)
+    }
+
+    async fn send_package(&mut self, message: ProtocolPackage) -> Result<()> {
+        let socket = self.get_server_socket();
+        let serialized = bincode::serialize(&message)?;
+        socket.write_all(&serialized).await?;
+        Ok(())
     }
 }
 
