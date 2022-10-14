@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use futures::{AsyncWriteExt, future::join_all};
 use smol::net::TcpStream;
 
-
 type TcpStreamKeyString = String;
 pub struct Broker { 
     channels: HashMap<String, Vec<TcpStream>>,
@@ -51,5 +50,9 @@ impl Broker {
             .collect();
 
         join_all(futures).await;
+    }
+
+    pub fn has_username(&self, username: &String) -> bool {
+        self.backwards.contains_key(username)
     }
 }

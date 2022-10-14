@@ -1,5 +1,3 @@
-use std::io::{Write, Read};
-
 use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
@@ -12,6 +10,7 @@ pub mod server;
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub enum ProtocolPackage {
     ServerConnectionRequest{ username: String },
+    ServerConnectionAccept,
 
     InfoListChannelsRequest,
     InfoListChannelsReply { channels: Vec<String> },
@@ -20,7 +19,7 @@ pub enum ProtocolPackage {
     ChannelConnectionRequestAccept,
     ChannelConnectionRequestDeny,
 
-    ChatMessageSend {message: String },
+    ChatMessageSend { message: String },
     ChatMessageSendAccept,
     ChatMessageSendDeny { error: String },
     ChatMessageReceive { username: String, message: String},
