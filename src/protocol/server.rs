@@ -1,15 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, fmt::{Debug, Display, write}};
 
 use smol::{net::TcpStream, lock::Mutex};
 use std::io;
 
 use crate::{error::Result, broker::Broker};
+use std::error::Error;
 
 use super::HasServerConnection;
-
-
-
-
 
 pub struct ClientConnection{ socket: TcpStream }
 pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
@@ -26,10 +23,42 @@ pub enum ClientConnectionAuthenticatedEdges<'a> {
     ListChannels(ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>),
 }
 
+#[derive(Debug)]
 pub struct ServerSideConnectionFMS<'a, S> {
     broker: &'a Arc<Mutex<Broker>>,
     state: S,
 }
+
+
+#[derive(Debug)]
+pub enum FailEdges<'a, T: Debug, E: Error> {
+    Disconnected,
+    Rejected(ServerSideConnectionFMS<'a, T>, E),
+    MalformedPackage(ServerSideConnectionFMS<'a, T>),
+}
+
+impl<'a, T: Debug, E: Error> Display for FailEdges<'a, T, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Disconnected =>  write!(f, "Tcp connection closed"),
+            Self::Rejected(_, error) => write!(f, "Rejected due to following error: {:?}", error),
+            Self::MalformedPackage(_) => write!(f, "Malformed/Unexpected package received")
+        }
+    }
+}
+
+impl<'a, T: Debug, E: Error + 'static> Error for FailEdges<'a, T, E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match *self {
+            Self::Disconnected => None,
+            Self::MalformedPackage(_) => None,
+            Self::Rejected(_,ref error) => Some(error),
+        }
+    }
+}
+
+
+// TODO create From<_>
 
 impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
     pub fn new(broker: &'a Arc<Mutex<Broker>>, connection: TcpStream) -> Self {
@@ -40,8 +69,6 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
             }
         }
     }
-
-    pub async fn listen(mut self) -> Result<>
 
     pub async fn authenticate(mut self) -> Result<ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>> {
         use crate::protocol::ProtocolPackage::*;

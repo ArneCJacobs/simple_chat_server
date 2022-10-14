@@ -6,7 +6,7 @@ mod broker;
 
 use broker::Broker;
 use futures::TryStreamExt;
-use protocol::HasServerConnection;
+use protocol::{HasServerConnection, server::ServerSideConnectionFMS};
 use smol::{net::TcpListener, lock::Mutex};
 use std::io;
 
@@ -54,41 +54,42 @@ impl ChatServer {
         let broker = &self.broker;
         self.socket
             .incoming()
-            .try_for_each_concurrent(None, |mut stream| async move {
-                use crate::protocol::ProtocolPackage::*;
-                let package = stream.receive_package().await.unwrap(); // TODO no unwrap 
-                match package {
-                    ServerConnectionRequest { username } => {
-                        {
-                            let guard = broker.lock_arc().await;               
-                            if guard.has_username(&username) {
-                                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Username already exists"));
-                            }
-                        }
-                        let reply = ServerConnectionAccept;
-                        let reply = stream.send_package_and_receive(reply).await.unwrap(); // TODO no unwrap
-                        // TODO this block should be handled by the code in the next TODO comment
-                        match reply {
-                            ChannelConnectionRequest { channel } => {
-                                let mut guard = broker.lock_arc().await;               
-                                guard.subscribe(channel, stream.clone());
-                            }
-                            _ => {
-                                return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
-                            }
-                        }
-                        
-                        // TODO read incoming messages from stream and handle accordingly 
-                        // this can be done, I think, by implementing the Stream trait from the futures crate for TcpConnection and then using 
-                        // try_for_each_concurrent from the StreamExt trait
-
-
-                    }
-                    _ => {
-                        return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
-                    }
-                }
+            .try_for_each_concurrent(None, |stream| async move {
+                let server_side_FSM = ServerSideConnectionFMS::new(broker, stream);
+                let server_side_FSM = server_side_FSM.authenticate().await;
                 Ok(())
+                // match package {
+                //     ServerConnectionRequest { username } => {
+                //         {
+                //             let guard = broker.lock_arc().await;               
+                //             if guard.has_username(&username) {
+                //                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Username already exists"));
+                //             }
+                //         }
+                //         let reply = ServerConnectionAccept;
+                //         let reply = stream.send_package_and_receive(reply).await.unwrap(); // TODO no unwrap
+                //         // TODO this block should be handled by the code in the next TODO comment
+                //         match reply {
+                //             ChannelConnectionRequest { channel } => {
+                //                 let mut guard = broker.lock_arc().await;               
+                //                 guard.subscribe(channel, stream.clone());
+                //             }
+                //             _ => {
+                //                 return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
+                //             }
+                //         }
+                //         
+                //         // TODO read incoming messages from stream and handle accordingly 
+                //         // this can be done, I think, by implementing the Stream trait from the futures crate for TcpConnection and then using 
+                //         // try_for_each_concurrent from the StreamExt trait
+                //
+                //
+                //     }
+                //     _ => {
+                //         return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
+                //     }
+                // }
+                // Ok(())
             })
         .await?;
 

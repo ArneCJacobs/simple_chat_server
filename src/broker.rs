@@ -4,6 +4,8 @@ use smol::net::TcpStream;
 use crate::error::Result;
 
 type TcpStreamKeyString = String;
+
+#[derive(Debug)]
 pub struct Broker { 
     channels: HashMap<String, Vec<TcpStream>>,
     backwards: HashMap<TcpStreamKeyString, String>,
