@@ -57,6 +57,7 @@ impl ChatServer {
             .try_for_each_concurrent(None, |stream| async move {
                 let server_side_FSM = ServerSideConnectionFMS::new(broker, stream);
                 let server_side_FSM = server_side_FSM.authenticate().await;
+                
                 Ok(())
                 // match package {
                 //     ServerConnectionRequest { username } => {
