@@ -25,19 +25,19 @@ impl HasServerConnection for ChannelConnected {
 }
 
 
-pub struct ClientConnectionFSM<S> {
+pub struct ClientSideConnectionFSM<S> {
     state: S,
 }
 
-impl ClientConnectionFSM<NotConnected> {
+impl ClientSideConnectionFSM<NotConnected> {
     pub fn new() -> Self {
-        ClientConnectionFSM {
+        ClientSideConnectionFSM {
             state: NotConnected
         }
     }
 
-    pub async fn connect(self, server_addr: String) -> Result<ClientConnectionFSM<ServerConnected>> {
-        Ok(ClientConnectionFSM {
+    pub async fn connect(self, server_addr: String) -> Result<ClientSideConnectionFSM<ServerConnected>> {
+        Ok(ClientSideConnectionFSM {
             state: ServerConnected{ 
                 server_socket: TcpStream::connect(server_addr).await? 
             },
@@ -46,15 +46,15 @@ impl ClientConnectionFSM<NotConnected> {
     }
 }
 
-impl ClientConnectionFSM<ServerConnected> {
+impl ClientSideConnectionFSM<ServerConnected> {
     // TODO return an error type here which contains a different state of the state machine and the error that caused it.
-    pub async fn join_channel(mut self, channel: String) -> Result<ClientConnectionFSM<ChannelConnected>> {
+    pub async fn join_channel(mut self, channel: String) -> Result<ClientSideConnectionFSM<ChannelConnected>> {
         let received_message = self.state.send_package_and_receive(ChannelConnectionRequest { channel: channel.clone() }).await?;
 
         use ProtocolPackage::*;
         match received_message {
             ChannelConnectionRequestAccept => {
-                Ok(ClientConnectionFSM { 
+                Ok(ClientSideConnectionFSM { 
                     state: ChannelConnected { 
                         server_socket: self.state.server_socket,
                         channel
@@ -75,13 +75,13 @@ impl ClientConnectionFSM<ServerConnected> {
 // TODO
 pub enum ClientConnectionError {
     ProcessError,
-    ChannelConnectionRequestDeny(ClientConnectionFSM<ServerConnected>),
-    MalformedMessage(ClientConnectionFSM<ChannelConnected>),
-    ConnectionLost(ClientConnectionFSM<NotConnected>), // TODO add error type here
+    ChannelConnectionRequestDeny(ClientSideConnectionFSM<ServerConnected>),
+    MalformedMessage(ClientSideConnectionFSM<ChannelConnected>),
+    ConnectionLost(ClientSideConnectionFSM<NotConnected>), // TODO add error type here
 }
 
-impl ClientConnectionFSM<ChannelConnected> {
-    pub async fn send_message(mut self, message: String) -> Result<ClientConnectionFSM<ChannelConnected>> {
+impl ClientSideConnectionFSM<ChannelConnected> {
+    pub async fn send_message(mut self, message: String) -> Result<ClientSideConnectionFSM<ChannelConnected>> {
         // TODO factor out code
         let message = ProtocolPackage::ChatMessageSend { message };
         let received_message = self.state.send_package_and_receive(message).await?;

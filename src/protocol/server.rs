@@ -1,65 +1,82 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use smol::net::TcpStream;
+use smol::{net::TcpStream, lock::Mutex};
+use std::io;
 
-use crate::error::Result;
+use crate::{error::Result, broker::Broker};
 
 use super::HasServerConnection;
 
 
-struct ClientConnection{ socket: TcpStream, username: String }
-struct ClientChannelConnection;
 
 
-struct ClientConnectionData {
-    username: String,
-    connection: TcpStream,
+
+pub struct ClientConnection{ socket: TcpStream }
+pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
+pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
+
+pub enum ClientConnectionEdges<'a> {
+    Disconnected,
+    Authenticated(ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>),
 }
 
-impl HasServerConnection for ClientConnection {
-    fn get_server_socket(&mut self) -> &mut TcpStream {
-        &mut self.socket
-    }
+pub enum ClientConnectionAuthenticatedEdges<'a> {
+    Disconnected,
+    ChannelConnect(ServerSideConnectionFMS<'a, ClientChannelConnection>),
+    ListChannels(ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>),
 }
 
-struct ServerConnectionFMS<S> {
-    channels: HashMap<String, Vec<ClientConnectionData>>,
+pub struct ServerSideConnectionFMS<'a, S> {
+    broker: &'a Arc<Mutex<Broker>>,
     state: S,
 }
 
-impl ServerConnectionFMS<ClientConnection> {
-    fn new(connection: TcpStream, username: String) -> Result<ServerConnectionFMS<ClientConnection>> {
-        let mut map = HashMap::new();
-        map.insert("welcome".to_string(), Vec::new());
-        Ok(ServerConnectionFMS {
-            channels: map,
+impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
+    pub fn new(broker: &'a Arc<Mutex<Broker>>, connection: TcpStream) -> Self {
+        ServerSideConnectionFMS {
+            broker,
             state: ClientConnection {
-                username,
                 socket: connection
+            }
+        }
+    }
+
+    pub async fn listen(mut self) -> Result<>
+
+    pub async fn authenticate(mut self) -> Result<ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>> {
+        use crate::protocol::ProtocolPackage::*;
+        let package = self.state.socket.receive_package().await?;
+        let username = match package {
+            ServerConnectionRequest { username } =>  Ok(username),
+            _ => Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
+        }?;
+
+        let mut guard = self.broker.lock_arc().await;               
+        guard.register_username(username.clone())?;
+        std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
+
+        let reply = ServerConnectionAccept;
+        self.state.socket.send_package(reply).await?;
+
+        Ok(ServerSideConnectionFMS {
+            broker: self.broker,
+            state: ClientConnectionAuthenticated {
+                socket: self.state.socket,
+                username,
             }
         })
     }
-
-    fn connect_channel(mut self, channel: String) -> Result<ServerConnectionFMS<ClientChannelConnection>> {
-        if !self.channels.contains_key(&channel) {
-            self.channels.insert(channel.clone(), Vec::new());
-        }
-        let channel_connection = self.channels.get_mut(&channel).ok_or("should never be called")?;
-
-        let client_connection_data = ClientConnectionData {
-            username: self.state.username,
-            connection: self.state.socket,
-        };
-
-        channel_connection.push(client_connection_data);
-
-        Ok(ServerConnectionFMS{ 
-            channels: self.channels, 
-            state: ClientChannelConnection 
-        })
-    } 
+}
 
 
-    // TODO use async to wait for any input on any channel
+impl<'a> ServerSideConnectionFMS<'a, ClientConnectionAuthenticated> {
+    pub async fn disconnect(self) {
+        let mut guard = self.broker.lock_arc().await;               
+        guard.deregister_username(&self.state.username);
+    }
+
+    pub async fn connect_channel(mut self) -> Result<ServerSideConnectionFMS<'a, ClientChannelConnection>> {
+        
+    }
 }
 
