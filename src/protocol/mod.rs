@@ -30,15 +30,15 @@ pub enum ProtocolPackage {
 }
 
 #[async_trait]
-pub trait HasServerConnection<'a, N, T: Debug> {
+pub trait HasServerConnection<'a, T: Debug + Clone> {
     fn get_server_socket(&mut self) -> &mut TcpStream;
 
-    async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> Result<'a, N, T> {
+    async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> Result<'a, ProtocolPackage, T> {
         self.send_package(message).await?;
         self.receive_package().await
     }
 
-    async fn receive_package(&mut self) -> Result<'a, N, T> {
+    async fn receive_package(&mut self) -> Result<'a, ProtocolPackage, T> {
         let socket = self.get_server_socket();
         let mut buffer = Vec::new();
         socket.read_to_end(&mut buffer).await?;
@@ -46,7 +46,7 @@ pub trait HasServerConnection<'a, N, T: Debug> {
         Ok(received_message)
     }
 
-    async fn send_package(&mut self, message: ProtocolPackage) -> Result<'a, N, T> {
+    async fn send_package(&mut self, message: ProtocolPackage) -> Result<'a, (), T> {
         let socket = self.get_server_socket();
         let serialized = bincode::serialize(&message)?;
         socket.write_all(&serialized).await?;
@@ -54,7 +54,7 @@ pub trait HasServerConnection<'a, N, T: Debug> {
     }
 }
 
-impl<'a, N, T: Debug> HasServerConnection<'a, N, T> for TcpStream {
+impl<'a, T: Debug + Clone> HasServerConnection<'a, T> for TcpStream {
     fn get_server_socket(&mut self) -> &mut TcpStream {
         self
     }

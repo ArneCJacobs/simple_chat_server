@@ -1,4 +1,4 @@
-use std::{error::Error, fmt::{Display, Debug}};
+use std::{error::Error, fmt::Debug};
 use thiserror::Error;
 
 use crate::protocol::server::ServerSideConnectionFMS;
@@ -11,7 +11,7 @@ pub enum ErrorType {
 }
 
 #[derive(Debug, Error)]
-pub enum FailEdges<'a, T: Debug> {
+pub enum FailEdges<'a, T: Debug + Clone> {
     #[error("Tcp connection ended")]
     Disconnected,
 
@@ -22,18 +22,27 @@ pub enum FailEdges<'a, T: Debug> {
     MalformedPackage(ServerSideConnectionFMS<'a, T>),
 
     #[error(transparent)]
-    InternalProcessError(#[from] Box<dyn std::error::Error>)
+    IoError(#[from] std::io::Error),
+
+    #[error(transparent)]
+    DeserializeError(#[from] Box<bincode::ErrorKind>),
+
 }
 
 
-pub type Result<'a, N, T> = std::result::Result<N, FailEdges<'a, T>>;
-pub type SResult<'a, N, T> = Result<'a,ServerSideConnectionFMS<'a, N>, ServerSideConnectionFMS<'a, T>>;
+pub type Result<'a, SuccessState, FailState> = std::result::Result<SuccessState, FailEdges<'a, FailState>>;
+
+pub type SResult<'a, SuccessState, FailState> = Result<
+    'a,
+    ServerSideConnectionFMS<'a, SuccessState>, 
+    FailState
+>;
+
 pub type GResult<T> = std::result::Result<T, Box<dyn Error>>;
 
-impl<'a, T: Debug> From<(ServerSideConnectionFMS<'a, T>, ErrorType)> for FailEdges<'a, T> {
-    fn from(pair: (ServerSideConnectionFMS<'a, T>, ErrorType)) -> Self {
-        let (context, error) = pair;
-        FailEdges::Rejected(context, error)
+impl<'a, T: Debug + Clone> FailEdges<'a, T> {
+    pub fn from_errortype(ssc_fsm: ServerSideConnectionFMS<'a, T>, error_type: ErrorType) -> FailEdges<'a, T> {
+        FailEdges::Rejected(ssc_fsm, error_type)
     }
 }
 

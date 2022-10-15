@@ -60,7 +60,7 @@ impl Broker {
 
     pub fn register_username(&mut self, username: String) -> std::result::Result<(), ErrorType> {
         if self.usernames.contains(&username) {
-            return Err(ErrorType::UsernameAlreadyExists); // TODO convert string error to enum error
+            return Err(ErrorType::UsernameAlreadyExists);
         }
         self.usernames.insert(username);
         Ok(())

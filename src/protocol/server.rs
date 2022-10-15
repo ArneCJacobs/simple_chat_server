@@ -2,12 +2,15 @@ use std::{io, sync::Arc, fmt::Debug};
 
 use smol::{net::TcpStream, lock::Mutex};
 
-use crate::broker::Broker;
+use crate::{broker::Broker, error::{SResult, FailEdges, Result}};
 
 use super::HasServerConnection;
 
+#[derive(Debug, Clone)]
 pub struct ClientConnection{ socket: TcpStream }
+#[derive(Debug, Clone)]
 pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
+#[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
 
 pub enum ClientConnectionEdges<'a> {
@@ -21,8 +24,8 @@ pub enum ClientConnectionAuthenticatedEdges<'a> {
     ListChannels(ServerSideConnectionFMS<'a, ClientConnectionAuthenticated>),
 }
 
-#[derive(Debug)]
-pub struct ServerSideConnectionFMS<'a, S> {
+#[derive(Debug, Clone)]
+pub struct ServerSideConnectionFMS<'a, S: Clone> {
     broker: &'a Arc<Mutex<Broker>>,
     state: S,
 }
@@ -40,16 +43,16 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
         }
     }
 
-    pub async fn authenticate(mut self) -> Result<'a, ClientConnectionAuthenticated> {
+    pub async fn authenticate(mut self) -> SResult<'a, ClientConnectionAuthenticated, ClientConnection> {
         use crate::protocol::ProtocolPackage::*;
         let package = self.state.socket.receive_package().await?;
         let username = match package {
             ServerConnectionRequest { username } =>  Ok(username),
-            _ => Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
+            _ => Err(FailEdges::MalformedPackage(self.clone()))
         }?;
 
         let mut guard = self.broker.lock_arc().await;               
-        guard.register_username(username.clone())?;
+        guard.register_username(username.clone()).map_err(|e| FailEdges::from_errortype(self.clone(), e))?;
         std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
 
         let reply = ServerConnectionAccept;
@@ -70,10 +73,6 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnectionAuthenticated> {
     pub async fn disconnect(self) {
         let mut guard = self.broker.lock_arc().await;               
         guard.deregister_username(&self.state.username);
-    }
-
-    pub async fn connect_channel(mut self) -> Result<ServerSideConnectionFMS<'a, ClientChannelConnection>> {
-        
     }
 }
 
