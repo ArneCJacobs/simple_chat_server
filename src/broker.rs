@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use futures::{AsyncWriteExt, future::join_all};
 use smol::net::TcpStream;
-use crate::error::{Result, ErrorType};
+use crate::error::{ServerResult, ErrorType};
 
 type TcpStreamKeyString = String;
 

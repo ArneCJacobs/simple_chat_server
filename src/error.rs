@@ -1,17 +1,20 @@
 use std::{error::Error, fmt::Debug};
 use thiserror::Error;
 
-use crate::protocol::server::ServerSideConnectionFMS;
+use crate::protocol::{server::ServerSideConnectionFMS, client::{ClientSideConnectionFMS, NotConnected}};
 
 
 #[derive(Debug, Error)]
 pub enum ErrorType {
     #[error("Username already exists")]
     UsernameAlreadyExists,
+
+    #[error("Failed to connect")]
+    FailedToConnect,
 }
 
 #[derive(Debug, Error)]
-pub enum FailEdges<'a, T: Debug + Clone> {
+pub enum ServerFailEdges<'a, T: Debug + Clone> {
     #[error("Tcp connection ended")]
     Disconnected,
 
@@ -29,10 +32,30 @@ pub enum FailEdges<'a, T: Debug + Clone> {
 
 }
 
+#[derive(Debug, Error)]
+pub enum ClientFailEdges<T: Debug + Clone> {
+    #[error("Tcp connection ended")]
+    Disconnected(ClientSideConnectionFMS<NotConnected>),
 
-pub type Result<'a, SuccessState, FailState> = std::result::Result<SuccessState, FailEdges<'a, FailState>>;
+    #[error("The request was rejected because {1}")]
+    Rejected(ClientSideConnectionFMS< T>, ErrorType),
 
-pub type SResult<'a, SuccessState, FailState> = Result<
+    #[error("Received a malformed or unexpected package")]
+    MalformedPackage(ClientSideConnectionFMS<T>),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
+    #[error(transparent)]
+    DeserializeError(#[from] Box<bincode::ErrorKind>),
+
+}
+
+
+pub type ServerResult<'a, SuccessResult, FailState> = std::result::Result<SuccessResult, ServerFailEdges<'a, FailState>>;
+pub type ClientResult<SuccessState, FailState> = std::result::Result<ClientSideConnectionFMS<SuccessState>, ClientFailEdges<FailState>>;
+
+pub type SResult<'a, SuccessState, FailState> = ServerResult<
     'a,
     ServerSideConnectionFMS<'a, SuccessState>, 
     FailState
@@ -40,15 +63,21 @@ pub type SResult<'a, SuccessState, FailState> = Result<
 
 pub type GResult<T> = std::result::Result<T, Box<dyn Error>>;
 
-impl<'a, T: Debug + Clone> FailEdges<'a, T> {
-    pub fn from_errortype(ssc_fsm: ServerSideConnectionFMS<'a, T>, error_type: ErrorType) -> FailEdges<'a, T> {
-        FailEdges::Rejected(ssc_fsm, error_type)
+impl<'a, T: Debug + Clone> ServerFailEdges<'a, T> {
+    pub fn from_errortype(ssc_fsm: ServerSideConnectionFMS<'a, T>, error_type: ErrorType) -> ServerFailEdges<'a, T> {
+        ServerFailEdges::Rejected(ssc_fsm, error_type)
+    }
+}
+
+impl<'a, T: Debug + Clone> ClientFailEdges<T> {
+    pub fn from_errortype(csc_fsm: ClientSideConnectionFMS<T>, error_type: ErrorType) -> ClientFailEdges<T> {
+        ClientFailEdges::Rejected(csc_fsm, error_type)
     }
 }
 
 
-impl<'a, T: Debug + Clone + Send + Sync> From<FailEdges<'a, T>> for std::io::Error {
-    fn from(_: FailEdges<'a, T>) -> Self {
+impl<'a, T: Debug + Clone + Send + Sync> From<ServerFailEdges<'a, T>> for std::io::Error {
+    fn from(_: ServerFailEdges<'a, T>) -> Self {
         std::io::Error::new(std::io::ErrorKind::Other, "Welp, whoops")
     }
 }

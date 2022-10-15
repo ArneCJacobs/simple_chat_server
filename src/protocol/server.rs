@@ -2,10 +2,12 @@ use std::{sync::Arc, fmt::Debug};
 
 use smol::{net::TcpStream, lock::Mutex};
 
-use crate::{broker::Broker, error::{SResult, FailEdges, Result}};
+use crate::{broker::Broker, error::{SResult, ServerFailEdges, ServerResult}};
 
 use super::{HasServerConnection, ProtocolPackage};
 
+
+// ### STATES ###
 #[derive(Debug, Clone)]
 pub struct ClientConnection{ socket: TcpStream }
 #[derive(Debug, Clone)]
@@ -13,6 +15,7 @@ pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
 #[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
 
+// ### EDGES ###
 #[derive(Debug, Clone)]
 pub enum ClientConnectionEdges<'a> {
     Disconnected,
@@ -32,9 +35,6 @@ pub struct ServerSideConnectionFMS<'a, S: Clone> {
     state: S,
 }
 
-
-// TODO create From<_>
-
 impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
     pub fn new(broker: &'a Arc<Mutex<Broker>>, connection: TcpStream) -> Self {
         ServerSideConnectionFMS {
@@ -47,7 +47,7 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
 
     pub async fn authenticate(mut self, username: String) -> SResult<'a, ClientConnectionAuthenticated, ClientConnection> {
         let mut guard = self.broker.lock_arc().await;               
-        guard.register_username(username.clone()).map_err(|e| FailEdges::from_errortype(self.clone(), e))?;
+        guard.register_username(username.clone()).map_err(|e| ServerFailEdges::from_errortype(self.clone(), e))?;
 
         // TODO remove clone, self should be able to be given as value, 
         //but rust cannot infer that self won't be used after this statement
@@ -55,7 +55,8 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
         std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
 
         let reply = ProtocolPackage::ServerConnectionAccept;
-        self.state.socket.send_package(reply).await?;
+        let temp: ServerResult<'a, (), ClientConnection> = self.state.socket.send_package(reply).await;
+        temp?;
 
         Ok(ServerSideConnectionFMS {
             broker: self.broker,
@@ -66,13 +67,14 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
         })
     }
 
-    pub async fn disconnect(self) -> Result<'a, (), ClientConnection> {
+    pub async fn disconnect(self) -> ServerResult<'a, (), ClientConnection> {
         self.state.socket.shutdown(std::net::Shutdown::Both)?;
         Ok(())
     }
 
-    pub async fn listen(mut self) -> Result<'a, ClientConnectionEdges<'a>, ClientConnection> {
-        let package = self.state.socket.receive_package().await?;
+    pub async fn listen(mut self) -> ServerResult<'a, ClientConnectionEdges<'a>, ClientConnection> {
+        let package: ServerResult<'a, ProtocolPackage, ClientConnection> = self.state.socket.receive_package().await;
+        let package = package?;
         use crate::protocol::ProtocolPackage::*;
         use ClientConnectionEdges::*;
         match package {
@@ -81,14 +83,14 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
                 self.disconnect().await?;
                 Ok(Disconnected)
             }, 
-            _ => Err(FailEdges::MalformedPackage(self)) 
+            _ => Err(ServerFailEdges::MalformedPackage(self)) 
         }
     }
 }
 
 
 impl<'a> ServerSideConnectionFMS<'a, ClientConnectionAuthenticated> {
-    pub async fn disconnect(self) -> Result<'a, (), ClientConnectionAuthenticated> {
+    pub async fn disconnect(self) -> ServerResult<'a, (), ClientConnectionAuthenticated> {
         let mut guard = self.broker.lock_arc().await;               
         guard.deregister_username(&self.state.username);
         self.state.socket.shutdown(std::net::Shutdown::Both)?;

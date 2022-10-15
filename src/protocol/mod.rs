@@ -3,8 +3,9 @@ use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
+use std::result::Result as StdResult;
 
-use crate::error::Result;
+use crate::error::ServerResult;
 
 pub mod client;
 pub mod server;
@@ -30,15 +31,16 @@ pub enum ProtocolPackage {
 }
 
 #[async_trait]
-pub trait HasServerConnection<'a, T: Debug + Clone> {
+pub trait HasServerConnection<E>
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
     fn get_server_socket(&mut self) -> &mut TcpStream;
 
-    async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> Result<'a, ProtocolPackage, T> {
+    async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> StdResult<ProtocolPackage, E> {
         self.send_package(message).await?;
         self.receive_package().await
     }
 
-    async fn receive_package(&mut self) -> Result<'a, ProtocolPackage, T> {
+    async fn receive_package(&mut self) -> StdResult<ProtocolPackage, E> {
         let socket = self.get_server_socket();
         let mut buffer = Vec::new();
         socket.read_to_end(&mut buffer).await?;
@@ -46,7 +48,7 @@ pub trait HasServerConnection<'a, T: Debug + Clone> {
         Ok(received_message)
     }
 
-    async fn send_package(&mut self, message: ProtocolPackage) -> Result<'a, (), T> {
+    async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), E> {
         let socket = self.get_server_socket();
         let serialized = bincode::serialize(&message)?;
         socket.write_all(&serialized).await?;
@@ -54,7 +56,8 @@ pub trait HasServerConnection<'a, T: Debug + Clone> {
     }
 }
 
-impl<'a, T: Debug + Clone> HasServerConnection<'a, T> for TcpStream {
+impl<E> HasServerConnection<E> for TcpStream
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
     fn get_server_socket(&mut self) -> &mut TcpStream {
         self
     }
