@@ -454,6 +454,7 @@ dependencies = [
  "miette",
  "serde",
  "smol",
+ "thiserror",
 ]
 
 [[package]]

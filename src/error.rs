@@ -1,33 +1,39 @@
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::{Display, Debug}};
+use thiserror::Error;
 
 use crate::protocol::server::ServerSideConnectionFMS;
 
-#[derive(Debug)]
-pub enum FailEdges<'a, T, E: Error> {
+
+#[derive(Debug, Error)]
+pub enum ErrorType {
+    #[error("Username already exists")]
+    UsernameAlreadyExists,
+}
+
+#[derive(Debug, Error)]
+pub enum FailEdges<'a, T: Debug> {
+    #[error("Tcp connection ended")]
     Disconnected,
-    Rejected(ServerSideConnectionFMS<'a, T>, E),
+
+    #[error("The request was rejected because {1}")]
+    Rejected(ServerSideConnectionFMS<'a, T>, ErrorType),
+
+    #[error("Received a malformed or unexpected package")]
     MalformedPackage(ServerSideConnectionFMS<'a, T>),
+
+    #[error(transparent)]
+    InternalProcessError(#[from] Box<dyn std::error::Error>)
 }
 
-impl<'a, T, E: Error> Display for FailEdges<'a, T, E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
-            Self::Disconnected =>  write!(f, "Tcp connection closed"),
-            Self::Rejected(_, error) => write!(f, "Rejected due to following error: {:}", error),
-            Self::MalformedPackage(_) => write!(f, "Malformed/Unexpected package received")
-        }
+
+pub type Result<'a, N, T> = std::result::Result<N, FailEdges<'a, T>>;
+pub type SResult<'a, N, T> = Result<'a,ServerSideConnectionFMS<'a, N>, ServerSideConnectionFMS<'a, T>>;
+pub type GResult<T> = std::result::Result<T, Box<dyn Error>>;
+
+impl<'a, T: Debug> From<(ServerSideConnectionFMS<'a, T>, ErrorType)> for FailEdges<'a, T> {
+    fn from(pair: (ServerSideConnectionFMS<'a, T>, ErrorType)) -> Self {
+        let (context, error) = pair;
+        FailEdges::Rejected(context, error)
     }
 }
 
-impl<'a, T, E: Error + 'static> Error for FailEdges<'a, T, E> {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match *self {
-            Self::Disconnected => None,
-            Self::MalformedPackage(_) => None,
-            Self::Rejected(_,ref error) => Some(error),
-        }
-    }
-}
-
-pub type Result<'a, T> = std::result::Result<T, FailEdges<'a, T, Box<dyn Error>>>;
-pub type SResult<'a, T> = Result<'a, ServerSideConnectionFMS<'a, T>>;
