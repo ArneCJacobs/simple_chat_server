@@ -46,3 +46,9 @@ impl<'a, T: Debug + Clone> FailEdges<'a, T> {
     }
 }
 
+
+impl<'a, T: Debug + Clone + Send + Sync> From<FailEdges<'a, T>> for std::io::Error {
+    fn from(_: FailEdges<'a, T>) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, "Welp, whoops")
+    }
+}

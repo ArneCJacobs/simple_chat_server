@@ -9,7 +9,7 @@ use error::GResult;
 use futures::TryStreamExt;
 use protocol::{HasServerConnection, server::ServerSideConnectionFMS};
 use smol::{net::TcpListener, lock::Mutex};
-use std::io;
+use std::io::{self, ErrorKind};
 use std::error::Error;
 
 use crate::error::Result;
@@ -23,8 +23,8 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
         let args: Vec<String> = env::args().collect();
         if args[1] == "listen" {
             println!("Listening on {}", ADDR);
-            // let mut chat_server = ChatServer::new(ADDR.to_string()).await.unwrap();
-            // chat_server.listen().await.unwrap();
+            let mut chat_server = ChatServer::new(ADDR.to_string()).await.unwrap();
+            chat_server.listen().await.unwrap();
             // let mut server = ChatServer::new(ADDR.to_string())?;
             // server.listen()?;
         } else {
@@ -58,41 +58,9 @@ impl ChatServer {
             .incoming()
             .try_for_each_concurrent(None, |stream| async move {
                 let server_side_fsm = ServerSideConnectionFMS::new(broker, stream);
-                let server_side_fsm = server_side_fsm.authenticate().await;
-                
+                let temp = server_side_fsm.listen().await?;
+                println!("something happened: {:?}", temp);
                 Ok(())
-                // match package {
-                //     ServerConnectionRequest { username } => {
-                //         {
-                //             let guard = broker.lock_arc().await;               
-                //             if guard.has_username(&username) {
-                //                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Username already exists"));
-                //             }
-                //         }
-                //         let reply = ServerConnectionAccept;
-                //         let reply = stream.send_package_and_receive(reply).await.unwrap(); // TODO no unwrap
-                //         // TODO this block should be handled by the code in the next TODO comment
-                //         match reply {
-                //             ChannelConnectionRequest { channel } => {
-                //                 let mut guard = broker.lock_arc().await;               
-                //                 guard.subscribe(channel, stream.clone());
-                //             }
-                //             _ => {
-                //                 return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
-                //             }
-                //         }
-                //         
-                //         // TODO read incoming messages from stream and handle accordingly 
-                //         // this can be done, I think, by implementing the Stream trait from the futures crate for TcpConnection and then using 
-                //         // try_for_each_concurrent from the StreamExt trait
-                //
-                //
-                //     }
-                //     _ => {
-                //         return Err(io::Error::new(io::ErrorKind::Other, "Malformed message"))
-                //     }
-                // }
-                // Ok(())
             })
         .await?;
 

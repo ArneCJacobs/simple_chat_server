@@ -26,7 +26,7 @@ pub enum ProtocolPackage {
     ChatMessageSendDeny { error: String },
     ChatMessageReceive { username: String, message: String},
 
-    Disconnect,
+    DisconnectNotification,
 }
 
 #[async_trait]
