@@ -15,6 +15,31 @@ pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
 #[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
 
+impl<E> HasServerConnection<E> for ClientConnection
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
+
+    fn get_server_socket(&mut self) ->  &mut TcpStream {
+        &mut self.socket
+    }
+}
+
+impl<E> HasServerConnection<E> for ClientConnectionAuthenticated
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
+
+    fn get_server_socket(&mut self) ->  &mut TcpStream {
+        &mut self.socket
+    }
+}
+
+impl<E> HasServerConnection<E> for ClientChannelConnection
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
+
+    fn get_server_socket(&mut self) ->  &mut TcpStream {
+        &mut self.socket
+    }
+}
+ 
+
 // ### EDGES ###
 #[derive(Debug, Clone)]
 pub enum ClientConnectionEdges<'a> {
@@ -48,7 +73,9 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
     pub async fn authenticate(mut self, username: String) -> SResult<'a, ClientConnectionAuthenticated, ClientConnection> {
         let mut guard = self.broker.lock_arc().await;               
         guard.register_username(username.clone())
-            .map_err(|e| ServerFailEdges::from_errortype(self.clone(), e))?;
+            .map_err(|e| {
+                ServerFailEdges::from_errortype(self.clone(), e)
+            })?;
 
         // TODO remove clone, self should be able to be given as value, 
         //but rust cannot infer that self won't be used after this statement
@@ -96,6 +123,13 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnectionAuthenticated> {
         guard.deregister_username(&self.state.username);
         self.state.socket.shutdown(std::net::Shutdown::Both)?;
         Ok(())
+    }
+}
+
+impl<'a, E, T: HasServerConnection<E> + Clone> HasServerConnection<E> for ServerSideConnectionFMS<'a, T> 
+    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
+    fn get_server_socket(&mut self) ->  &mut TcpStream {
+        self.state.get_server_socket()
     }
 }
 

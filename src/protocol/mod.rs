@@ -1,16 +1,16 @@
 use std::fmt::Debug;
+use std::result::Result as StdResult;
 
 use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
-use std::result::Result as StdResult;
 
-use crate::error::ServerResult;
+use crate::error::ErrorType;
 
 pub mod client;
 pub mod server;
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ProtocolPackage {
     ServerConnectionRequest{ username: String },
     ServerConnectionAccept,
@@ -24,10 +24,12 @@ pub enum ProtocolPackage {
 
     ChatMessageSend { message: String },
     ChatMessageSendAccept,
-    ChatMessageSendDeny { error: String },
+
     ChatMessageReceive { username: String, message: String},
 
     DisconnectNotification,
+
+    Rejection{ reason: ErrorType },
 }
 
 #[async_trait]

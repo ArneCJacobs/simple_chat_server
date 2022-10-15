@@ -11,6 +11,8 @@ use protocol::server::ServerSideConnectionFMS;
 use smol::{net::TcpListener, lock::Mutex};
 use std::error::Error;
 
+use crate::{error::{ServerFailEdges, ServerResult, ErrorType}, protocol::{HasServerConnection, ProtocolPackage, server::ClientConnection}};
+
 
 const ADDR: &'static str = "127.0.0.1:8080";
 
@@ -49,13 +51,33 @@ impl ChatServer {
         })
     }
 
-    async fn listen(&mut self) -> GResult<()> {
+    async fn listen<'a>(&mut self) -> GResult<()> {
         let broker = &self.broker;
         self.socket
             .incoming()
             .try_for_each_concurrent(None, |stream| async move {
                 let server_side_fsm = ServerSideConnectionFMS::new(broker, stream);
-                let temp = server_side_fsm.listen().await?;
+                let temp = server_side_fsm.listen().await;
+                match temp {
+                    Ok(val) => println!("succeeded: {:?}", val),
+                    Err(err) => {
+                        // do this is on generic FSM trait object
+                        match err {
+                            ServerFailEdges::Rejected(mut fsm, error) => {
+                                let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: error }).await;
+                                temp?;
+                            },
+                            ServerFailEdges::MalformedPackage(mut fsm) => {
+                                let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: ErrorType::MalformedPackage }).await;
+                                temp?;
+                            }
+                            ServerFailEdges::Disconnected => {},
+                            ServerFailEdges::IoError(err) => {/* TODO should close connection */ }
+                            ServerFailEdges::DeserializeError(err) => {/* TODO should close connection */ }
+                        }
+                    } 
+                }
+
                 println!("something happened: {:?}", temp);
                 Ok(())
             })

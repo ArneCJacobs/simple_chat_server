@@ -51,10 +51,16 @@ impl ClientSideConnectionFMS<NotConnected> {
 }
 
 impl ClientSideConnectionFMS<ServerConnected> {
-    // pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
-    //     let message = ProtocolPackage::ServerConnectionRequest { username };
-    //     let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
-    //     let reply = reply?;
-    // }
+    pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
+        use ProtocolPackage::*;
+        let message = ServerConnectionRequest { username };
+        let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
+        let reply = reply?;
+
+        match reply {
+            ServerConnectedAuthenticated => Ok(),
+            ServerConnect
+        }
+    }
 }
 

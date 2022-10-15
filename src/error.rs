@@ -1,17 +1,21 @@
 use std::{error::Error, fmt::Debug};
+use serde::{Serialize, Deserialize};
 use thiserror::Error;
 
 use crate::protocol::{server::ServerSideConnectionFMS, client::{ClientSideConnectionFMS, NotConnected}};
 use std::result::Result as StdResult;
 
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Serialize, Deserialize)]
 pub enum ErrorType {
     #[error("Username already exists")]
     UsernameAlreadyExists,
 
     #[error("Failed to connect")]
     FailedToConnect,
+
+    #[error("Malformed or unexpected package received")]
+    MalformedPackage,
 }
 
 #[derive(Debug, Error)]
