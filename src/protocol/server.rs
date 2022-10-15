@@ -1,4 +1,4 @@
-use std::{io, sync::Arc, fmt::Debug};
+use std::{sync::Arc, fmt::Debug};
 
 use smol::{net::TcpStream, lock::Mutex};
 

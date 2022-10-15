@@ -7,12 +7,9 @@ mod broker;
 use broker::Broker;
 use error::GResult;
 use futures::TryStreamExt;
-use protocol::{HasServerConnection, server::ServerSideConnectionFMS};
+use protocol::server::ServerSideConnectionFMS;
 use smol::{net::TcpListener, lock::Mutex};
-use std::io::{self, ErrorKind};
 use std::error::Error;
-
-use crate::error::Result;
 
 
 const ADDR: &'static str = "127.0.0.1:8080";
