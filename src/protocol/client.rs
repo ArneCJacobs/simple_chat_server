@@ -1,6 +1,6 @@
 use smol::net::{TcpStream, TcpListener};
 
-use crate::error::{ServerResult, ClientResult, ClientFailEdges, ErrorType};
+use crate::error::{ServerResult, ClientResult, ClientFailEdges, ErrorType, CResult};
 
 use super::{HasServerConnection, ProtocolPackage};
 
@@ -42,7 +42,7 @@ impl ClientSideConnectionFMS<NotConnected> {
         ClientSideConnectionFMS { state: NotConnected }
     }
 
-    pub async fn connect(addr: String) -> ClientResult<ServerConnected, NotConnected> {
+    pub async fn connect(addr: String) -> CResult<ServerConnected, NotConnected> {
         let tcp_connection = TcpStream::connect(addr).await?;
         Ok(ClientSideConnectionFMS {
             state: ServerConnected{ server_socket: tcp_connection }
@@ -51,9 +51,10 @@ impl ClientSideConnectionFMS<NotConnected> {
 }
 
 impl ClientSideConnectionFMS<ServerConnected> {
-    // pub async fn authenticate(mut self, username: String) -> ClientResult<ServerConnectedAuthenticated, ServerConnected> {
+    // pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
     //     let message = ProtocolPackage::ServerConnectionRequest { username };
-    //     let reply = self.state.server_socket.send_package_and_receive(message).await?;
+    //     let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
+    //     let reply = reply?;
     // }
 }
 

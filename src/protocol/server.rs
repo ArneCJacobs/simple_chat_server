@@ -47,7 +47,8 @@ impl<'a> ServerSideConnectionFMS<'a, ClientConnection> {
 
     pub async fn authenticate(mut self, username: String) -> SResult<'a, ClientConnectionAuthenticated, ClientConnection> {
         let mut guard = self.broker.lock_arc().await;               
-        guard.register_username(username.clone()).map_err(|e| ServerFailEdges::from_errortype(self.clone(), e))?;
+        guard.register_username(username.clone())
+            .map_err(|e| ServerFailEdges::from_errortype(self.clone(), e))?;
 
         // TODO remove clone, self should be able to be given as value, 
         //but rust cannot infer that self won't be used after this statement

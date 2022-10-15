@@ -2,6 +2,7 @@ use std::{error::Error, fmt::Debug};
 use thiserror::Error;
 
 use crate::protocol::{server::ServerSideConnectionFMS, client::{ClientSideConnectionFMS, NotConnected}};
+use std::result::Result as StdResult;
 
 
 #[derive(Debug, Error)]
@@ -52,14 +53,15 @@ pub enum ClientFailEdges<T: Debug + Clone> {
 }
 
 
-pub type ServerResult<'a, SuccessResult, FailState> = std::result::Result<SuccessResult, ServerFailEdges<'a, FailState>>;
-pub type ClientResult<SuccessState, FailState> = std::result::Result<ClientSideConnectionFMS<SuccessState>, ClientFailEdges<FailState>>;
-
-pub type SResult<'a, SuccessState, FailState> = ServerResult<
-    'a,
+pub type ServerResult<'a, SuccessResult, FailState> = StdResult<SuccessResult, ServerFailEdges<'a, FailState>>;
+pub type SResult<'a, SuccessState, FailState> = StdResult<
     ServerSideConnectionFMS<'a, SuccessState>, 
-    FailState
+    ServerFailEdges<'a, FailState> 
 >;
+
+pub type ClientResult<SuccessResult, FailState> = StdResult<SuccessResult, ClientFailEdges<FailState>>;
+pub type CResult<SuccessState, FailState> = StdResult<ClientSideConnectionFMS<SuccessState>, ClientFailEdges<FailState>>;
+
 
 pub type GResult<T> = std::result::Result<T, Box<dyn Error>>;
 
