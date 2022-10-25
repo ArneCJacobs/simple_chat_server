@@ -15,24 +15,22 @@ pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
 #[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
 
-impl<E> HasServerConnection<E> for ClientConnection
-    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
-
+impl HasServerConnection for ClientConnection
+{
     fn get_server_socket(&mut self) ->  &mut TcpStream {
         &mut self.socket
     }
 }
 
-impl<E> HasServerConnection<E> for ClientConnectionAuthenticated
-    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
-
+impl HasServerConnection for ClientConnectionAuthenticated
+{
     fn get_server_socket(&mut self) ->  &mut TcpStream {
         &mut self.socket
     }
 }
 
-impl<E> HasServerConnection<E> for ClientChannelConnection
-    where E: From<Box<bincode::ErrorKind>> + From<std::io::Error> {
+impl HasServerConnection for ClientChannelConnection
+{
 
     fn get_server_socket(&mut self) ->  &mut TcpStream {
         &mut self.socket
