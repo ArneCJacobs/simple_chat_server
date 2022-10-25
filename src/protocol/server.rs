@@ -1,10 +1,11 @@
 use std::{sync::Arc, fmt::Debug};
 
+use rust_state_machine::{AsyncProgress, state_machine, with_context};
 use smol::{net::TcpStream, lock::Mutex};
 
-use crate::broker::Broker;
+use crate::broker::{Broker, ErrorType};
 
-use super::{HasServerConnection, ProtocolPackage};
+use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
 // ### STATES ###
@@ -14,29 +15,87 @@ pub struct ClientConnection{ socket: TcpStream }
 pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
 #[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
+pub struct Disconnected;
+pub struct SharedContext{ 
+    broker: Arc<Mutex<Broker>> 
+} 
 
-impl HasServerConnection for ClientConnection
-{
-    fn get_server_socket(&mut self) ->  &mut TcpStream {
-        &mut self.socket
+pub enum Reaction {
+    Success,
+    Disconnected,
+    LostConnecion,
+    MalformedPackage,
+    UsernameAlreadyTaken,
+    IoError(std::io::Error),
+    BinError(Box<bincode::ErrorKind>),
+}
+
+state_machine!{
+    pub
+    async
+    Name(ServerSideConnectionSM)
+    Start(ClientConnection)
+    SharedContext(SharedContext)
+    Input(ProtocolPackage)
+    Output(Reaction)
+    Edges {
+        ClientConnection => [Disconnected, ClientConnection, ClientConnectionAuthenticated],
+        ClientConnectionAuthenticated => [Disconnected, ClientConnectionAuthenticated, ClientChannelConnection],
+        ClientChannelConnection => [Disconnected, ClientChannelConnection, ClientConnectionAuthenticated],
     }
 }
 
-impl HasServerConnection for ClientConnectionAuthenticated
-{
-    fn get_server_socket(&mut self) ->  &mut TcpStream {
-        &mut self.socket
+impl From<SendReceiveError> for Reaction {
+    fn from(error: SendReceiveError) -> Self {
+        match error {
+            SendReceiveError::IoError(error) => Reaction::IoError(error),
+            SendReceiveError::BinError(error) => Reaction::BinError(error),
+        }
     }
 }
 
-impl HasServerConnection for ClientChannelConnection
-{
+#[::rust_state_machine::async_trait::async_trait]
+impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConnection {
+   async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionEdges, Reaction)> {
+        let username = match input {
+            ProtocolPackage::ServerAuthenticationRequest{ username } => username,
+            ProtocolPackage::DisconnectNotification => return Some((Disconnected.into(), Reaction::Disconnected)),
+            _ => return Some((self.into(), Reaction::MalformedPackage)),
+        };
 
-    fn get_server_socket(&mut self) ->  &mut TcpStream {
-        &mut self.socket
-    }
+        let mut guard = shared.broker.lock_arc().await;               
+        let res = guard.register_username(username.clone());
+        std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
+        if let Err(error) = res {
+            let message = ProtocolPackage::Deny{ error };
+            with_context!(self.socket.send_package(message).await, self);
+            return Some((self.into(), Reaction::UsernameAlreadyTaken));
+        } else {
+            let reply = ProtocolPackage::Accept;
+            with_context!(self.socket.send_package(reply).await, self);
+            let new_state = ClientConnectionAuthenticated {
+                socket: self.socket,
+                username,
+            };
+            return Some((new_state.into(), Reaction::Success));
+        }
+   } 
 }
- 
+
+#[::rust_state_machine::async_trait::async_trait]
+impl AsyncProgress<ClientConnectionAuthenticatedEdges, ServerSideConnectionSM> for ClientConnectionAuthenticated {
+    async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> {
+        todo!();  
+    } 
+}
+
+#[::rust_state_machine::async_trait::async_trait]
+impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for ClientChannelConnection {
+    async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientChannelConnectionEdges, Reaction)> {
+        todo!();  
+    } 
+}
+
 
 // ### EDGES ###
 // #[derive(Debug, Clone)]

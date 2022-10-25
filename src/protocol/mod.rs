@@ -5,6 +5,8 @@ use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
 
+use crate::broker::ErrorType;
+
 pub mod client;
 pub mod server;
 
@@ -25,7 +27,7 @@ pub enum ProtocolPackage {
     DisconnectNotification,
 
     Accept,
-    Deny { message: String },
+    Deny { error: ErrorType },
 }
 
 pub enum SendReceiveError {

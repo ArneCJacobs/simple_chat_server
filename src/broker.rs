@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use futures::{AsyncWriteExt, future::join_all};
 use smol::net::TcpStream;
+use serde::{Serialize, Deserialize};
 
 type TcpStreamKeyString = String;
 
@@ -9,6 +10,11 @@ pub struct Broker {
     channels: HashMap<String, Vec<TcpStream>>,
     backwards: HashMap<TcpStreamKeyString, String>,
     usernames: HashSet<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ErrorType {
+    UsernameAlreadyExists,
 }
 
 
@@ -57,13 +63,13 @@ impl Broker {
         join_all(futures).await;
     }
 
-    // pub fn register_username(&mut self, username: String) -> std::result::Result<(), ErrorType> {
-    //     if self.usernames.contains(&username) {
-    //         return Err(ErrorType::UsernameAlreadyExists);
-    //     }
-    //     self.usernames.insert(username);
-    //     Ok(())
-    // }
+    pub fn register_username(&mut self, username: String) -> std::result::Result<(), ErrorType> {
+        if self.usernames.contains(&username) {
+            return Err(ErrorType::UsernameAlreadyExists);
+        }
+        self.usernames.insert(username);
+        Ok(())
+    }
 
     pub fn deregister_username(&mut self, username: &String) {
         self.usernames.remove(username);
