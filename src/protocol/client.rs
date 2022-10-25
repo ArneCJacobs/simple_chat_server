@@ -22,12 +22,18 @@ pub struct Shared;
 pub enum Input {
     ConnectServer(String),
     Authenticate(String),
+    GetChannelsList,
+    ConnectChannel(String),
+    SendMessage(String),
+    DisconnectChannel,
+    Disconnect,
 }
 
 pub enum Reaction {
     IoError(std::io::Error),
     BinError(Box<bincode::ErrorKind>),
     MalformedPackage,
+    ChannelList(Vec<String>),
     InvalidCommand,
     Success,
     Deny { message: String }
@@ -56,13 +62,12 @@ impl ToStatesAndOutput<NotConnected, NotConnectedEdges, Reaction> for std::io::E
     }
 }
 
-impl ToStatesAndOutput<ServerConnected, ServerConnectedEdges, Reaction> for SendReceiveError {
-    fn context(self, state: ServerConnected) -> (ServerConnectedEdges, Reaction) {
-        let reaction = match self {
+impl From<SendReceiveError> for Reaction {
+    fn from(error: SendReceiveError) -> Self {
+        match error {
             SendReceiveError::IoError(error) => Reaction::IoError(error),
             SendReceiveError::BinError(error) => Reaction::BinError(error),
-        };
-        (state.into(), reaction)
+        }
     }
 }
 
@@ -86,6 +91,7 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
     async fn transition(mut self, _shared: &mut Shared, input: Input) -> Option<(ServerConnectedEdges, Reaction)> {
         let new_username = match input {
             Input::Authenticate(username) => username,
+            Input::Disconnect => return self.server_socket.disconnect().await,
             _ => return Some((self.into(), Reaction::InvalidCommand)),
         };
         let message = ProtocolPackage::ServerAuthenticationRequest{ username: new_username.clone() };
@@ -102,17 +108,87 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
     } 
 }
 
+impl ServerConnectedAuthenticated {
+    async fn connect_channel(mut self, channel: String) -> Option<(ServerConnectedAuthenticatedEdges, Reaction)> 
+    {
+        let message = ProtocolPackage::ChannelConnectionRequest{ channel: channel.clone() };
+        let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        match response {
+            ProtocolPackage::Deny{ message } => Some((self.into(), Reaction::Deny{message})),
+            ProtocolPackage::Accept => {
+                let new_state = ServerChannelConnected {
+                    server_socket: self.server_socket,
+                    username: self.username,
+                    channel,
+                };
+                Some((new_state.into(), Reaction::Success))
+            },
+            _ => Some((self.into(), Reaction::MalformedPackage)),
+        }
+    }
+
+    async fn list_channels(mut self)-> Option<(ServerConnectedAuthenticatedEdges, Reaction)>
+    {
+        let message = ProtocolPackage::InfoListChannelsRequest;
+        let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        match response {
+            ProtocolPackage::Deny{ message } => Some((self.into(), Reaction::Deny{message})),
+            ProtocolPackage::InfoListChannelsReply{ channels } => Some((self.into(), Reaction::ChannelList(channels))),
+            _ => Some((self.into(), Reaction::MalformedPackage)),
+        }
+    }
+}
+
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ServerConnectedAuthenticatedEdges, ClientSideConnectionSM> for ServerConnectedAuthenticated {
-    async fn transition(self, _shared: &mut Shared, _input: Input) -> Option<(ServerConnectedAuthenticatedEdges, Reaction)> {
-        None
+    async fn transition(self, _shared: &mut Shared, input: Input) -> Option<(ServerConnectedAuthenticatedEdges, Reaction)> {
+        match input {
+            Input::ConnectChannel(channel) => self.connect_channel(channel).await,
+            Input::GetChannelsList => self.list_channels().await,
+            Input::Disconnect => self.server_socket.disconnect().await,
+            _ => Some((self.into(), Reaction::InvalidCommand))
+        }
     } 
+}
+
+impl ServerChannelConnected {
+    async fn send_message(mut self, message: String) -> Option<(ServerChannelConnectedEdges, Reaction)>
+    {
+        todo!();
+    }
+
+    async fn disconnect_channel(mut self) -> Option<(ServerChannelConnectedEdges, Reaction)>
+    {
+        todo!();
+    }
+}
+
+
+#[::rust_state_machine::async_trait::async_trait]
+trait Disconnect<T: Send> {
+    async fn disconnect(mut self) -> Option<(T, Reaction)>;
+} 
+
+#[::rust_state_machine::async_trait::async_trait]
+impl<T:HasServerConnection + Send, D: From<NotConnected> + Send> Disconnect<D> for T {
+    async fn disconnect(mut self) -> Option<(D, Reaction)> {
+        let message = ProtocolPackage::DisconnectNotification;
+        match self.get_server_socket().send_package(message).await {
+            Ok(_) => Some((NotConnected.into(), Reaction::Success)),
+            Err(error) => Some((NotConnected.into(), error.into())),
+        }
+    }
 }
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for ServerChannelConnected {
-    async fn transition(self, _shared: &mut Shared, _input: Input) -> Option<(ServerChannelConnectedEdges, Reaction)> {
-        None
+    async fn transition(self, _shared: &mut Shared, input: Input) -> Option<(ServerChannelConnectedEdges, Reaction)> {
+        match input {
+            Input::SendMessage(message) => self.send_message(message).await,
+            Input::DisconnectChannel => self.disconnect_channel().await,
+            Input::Disconnect => self.server_socket.disconnect().await,
+            _ => Some((self.into(), Reaction::MalformedPackage))
+        }
     } 
 }
 
