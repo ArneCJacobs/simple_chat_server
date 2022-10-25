@@ -1,7 +1,5 @@
 use smol::net::{TcpStream, TcpListener};
 
-use crate::error::{ServerResult, ClientResult, ClientFailEdges, ErrorType, CResult};
-
 use super::{HasServerConnection, ProtocolPackage};
 
 
@@ -19,48 +17,48 @@ pub struct ServerChannelConnected {
     username: String,
 }
 // ### EDGES ###
-#[derive(Debug, Clone)]
-pub enum NotConnectedEdges {
-    Connect(ClientSideConnectionFMS<ServerConnected>),
-}
-
-#[derive(Debug, Clone)]
-pub enum ServerConnectedEdges {
-    Disconnected,
-    Authenticated(ClientSideConnectionFMS<ServerConnectedAuthenticated>),
-}
+// #[derive(Debug, Clone)]
+// pub enum NotConnectedEdges {
+//     Connect(ClientSideConnectionFMS<ServerConnected>),
+// }
+//
+// #[derive(Debug, Clone)]
+// pub enum ServerConnectedEdges {
+//     Disconnected,
+//     Authenticated(ClientSideConnectionFMS<ServerConnectedAuthenticated>),
+// }
 
 // ### FSM ###
 
-#[derive(Debug, Clone)]
-pub struct ClientSideConnectionFMS<S: Clone> {
-    state: S,
-}
+// #[derive(Debug, Clone)]
+// pub struct ClientSideConnectionFMS<S: Clone> {
+//     state: S,
+// }
 
-impl ClientSideConnectionFMS<NotConnected> {
-    pub fn new() -> Self {
-        ClientSideConnectionFMS { state: NotConnected }
-    }
-
-    pub async fn connect(addr: String) -> CResult<ServerConnected, NotConnected> {
-        let tcp_connection = TcpStream::connect(addr).await?;
-        Ok(ClientSideConnectionFMS {
-            state: ServerConnected{ server_socket: tcp_connection }
-        })
-    }
-}
-
-impl ClientSideConnectionFMS<ServerConnected> {
-    pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
-        use ProtocolPackage::*;
-        let message = ServerConnectionRequest { username };
-        let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
-        let reply = reply?;
-
-        match reply {
-            ServerConnectedAuthenticated => Ok(),
-            ServerConnect
-        }
-    }
-}
+// impl ClientSideConnectionFMS<NotConnected> {
+//     pub fn new() -> Self {
+//         ClientSideConnectionFMS { state: NotConnected }
+//     }
+//
+//     pub async fn connect(addr: String) -> CResult<ServerConnected, NotConnected> {
+//         let tcp_connection = TcpStream::connect(addr).await?;
+//         Ok(ClientSideConnectionFMS {
+//             state: ServerConnected{ server_socket: tcp_connection }
+//         })
+//     }
+// }
+//
+// impl ClientSideConnectionFMS<ServerConnected> {
+//     pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
+//         use ProtocolPackage::*;
+//         let message = ServerConnectionRequest { username };
+//         let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
+//         let reply = reply?;
+//
+//         match reply {
+//             ServerConnectedAuthenticated => Ok(),
+//             ServerConnect
+//         }
+//     }
+// }
 

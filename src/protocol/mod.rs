@@ -5,8 +5,6 @@ use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
 
-use crate::error::ErrorType;
-
 pub mod client;
 pub mod server;
 
@@ -28,8 +26,6 @@ pub enum ProtocolPackage {
     ChatMessageReceive { username: String, message: String},
 
     DisconnectNotification,
-
-    Rejection{ reason: ErrorType },
 }
 
 #[async_trait]

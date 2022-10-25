@@ -1,20 +1,17 @@
 use std::{env, sync::Arc};
+use std::error::Error;
 
 mod protocol;
-mod error;
 mod broker;
 
 use broker::Broker;
-use error::GResult;
 use futures::TryStreamExt;
-use protocol::server::ServerSideConnectionFMS;
 use smol::{net::TcpListener, lock::Mutex};
-use std::error::Error;
 
-use crate::{error::{ServerFailEdges, ServerResult, ErrorType}, protocol::{HasServerConnection, ProtocolPackage, server::ClientConnection}};
+use crate::protocol::{HasServerConnection, ProtocolPackage, server::ClientConnection};
 
 
-const ADDR: &'static str = "127.0.0.1:8080";
+const ADDR: &str = "127.0.0.1:8080";
 
 
 fn main() -> std::result::Result<(), Box<dyn Error>> {
@@ -22,8 +19,8 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
         let args: Vec<String> = env::args().collect();
         if args[1] == "listen" {
             println!("Listening on {}", ADDR);
-            let mut chat_server = ChatServer::new(ADDR.to_string()).await.unwrap();
-            chat_server.listen().await.unwrap();
+            // let mut chat_server = ChatServer::new(ADDR.to_string()).await.unwrap();
+            // chat_server.listen().await.unwrap();
             // let mut server = ChatServer::new(ADDR.to_string())?;
             // server.listen()?;
         } else {
@@ -43,46 +40,46 @@ struct ChatServer {
     broker: Arc<Mutex<Broker>>,
 }
 
-impl ChatServer {
-    async fn new(addr: String) -> GResult<Self> {
-        Ok(ChatServer {
-            socket: TcpListener::bind(addr).await?,
-            broker: Arc::new(Mutex::new(Broker::new())),
-        })
-    }
-
-    async fn listen<'a>(&mut self) -> GResult<()> {
-        let broker = &self.broker;
-        self.socket
-            .incoming()
-            .try_for_each_concurrent(None, |stream| async move {
-                let server_side_fsm = ServerSideConnectionFMS::new(broker, stream);
-                let temp = server_side_fsm.listen().await;
-                match temp {
-                    Ok(val) => println!("succeeded: {:?}", val),
-                    Err(err) => {
-                        // do this is on generic FSM trait object
-                        match err {
-                            ServerFailEdges::Rejected(mut fsm, error) => {
-                                let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: error }).await;
-                                temp?;
-                            },
-                            ServerFailEdges::MalformedPackage(mut fsm) => {
-                                let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: ErrorType::MalformedPackage }).await;
-                                temp?;
-                            }
-                            ServerFailEdges::Disconnected => {},
-                            ServerFailEdges::IoError(err) => {/* TODO should close connection */ }
-                            ServerFailEdges::DeserializeError(err) => {/* TODO should close connection */ }
-                        }
-                    } 
-                }
-
-                println!("something happened: {:?}", temp);
-                Ok(())
-            })
-        .await?;
-
-        Ok(())
-    }
-}
+// impl ChatServer {
+//     async fn new(addr: String) -> GResult<Self> {
+//         Ok(ChatServer {
+//             socket: TcpListener::bind(addr).await?,
+//             broker: Arc::new(Mutex::new(Broker::new())),
+//         })
+//     }
+//
+//     async fn listen<'a>(&mut self) -> GResult<()> {
+//         let broker = &self.broker;
+//         self.socket
+//             .incoming()
+//             .try_for_each_concurrent(None, |stream| async move {
+//                 let server_side_fsm = ServerSideConnectionFMS::new(broker, stream);
+//                 let temp = server_side_fsm.listen().await;
+//                 match temp {
+//                     Ok(val) => println!("succeeded: {:?}", val),
+//                     Err(err) => {
+//                         // do this is on generic FSM trait object
+//                         match err {
+//                             ServerFailEdges::Rejected(mut fsm, error) => {
+//                                 let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: error }).await;
+//                                 temp?;
+//                             },
+//                             ServerFailEdges::MalformedPackage(mut fsm) => {
+//                                 let temp: ServerResult<'a, (), ClientConnection> = fsm.send_package(ProtocolPackage::Rejection { reason: ErrorType::MalformedPackage }).await;
+//                                 temp?;
+//                             }
+//                             ServerFailEdges::Disconnected => {},
+//                             ServerFailEdges::IoError(err) => {/* TODO should close connection */ }
+//                             ServerFailEdges::DeserializeError(err) => {/* TODO should close connection */ }
+//                         }
+//                     } 
+//                 }
+//
+//                 println!("something happened: {:?}", temp);
+//                 Ok(())
+//             })
+//         .await?;
+//
+//         Ok(())
+//     }
+// }
