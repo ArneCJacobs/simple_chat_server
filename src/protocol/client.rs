@@ -1,6 +1,8 @@
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use smol::net::{TcpStream, TcpListener};
 
+use crate::{broker::ErrorType, impl_send_receive};
+
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
@@ -36,7 +38,7 @@ pub enum Reaction {
     ChannelList(Vec<String>),
     InvalidCommand,
     Success,
-    Deny { message: String }
+    Deny { error: ErrorType }
     // message from chat, disconnection notice, etc
 }
 
@@ -56,11 +58,15 @@ state_machine! {
     }
 }
 
-impl ToStatesAndOutput<NotConnected, NotConnectedEdges, Reaction> for std::io::Error {
-    fn context(self, state: NotConnected) -> (NotConnectedEdges, Reaction) {
-       (state.into(), Reaction::IoError(self))  
-    }
-}
+// impl ToStatesAndOutput<NotConnected, NotConnectedEdges, Reaction> for std::io::Error {
+//     fn context(self, state: NotConnected) -> (NotConnectedEdges, Reaction) {
+//        (state.into(), Reaction::IoError(self))  
+//     }
+// }
+//
+
+
+impl_send_receive!(Reaction, NotConnected, NotConnected, ServerConnected, ServerConnectedAuthenticated, ServerChannelConnected);
 
 impl From<SendReceiveError> for Reaction {
     fn from(error: SendReceiveError) -> Self {
@@ -102,7 +108,7 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
                 let new_state = ServerConnectedAuthenticated { server_socket: self.server_socket, username: new_username };
                 Some((new_state.into(), Reaction::Success))
             },
-            ProtocolPackage::Deny{ message } => Some((self.into(), Reaction::Deny{ message })),
+            ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             _ => Some((self.into(), Reaction::MalformedPackage))
         }
     } 
@@ -114,7 +120,7 @@ impl ServerConnectedAuthenticated {
         let message = ProtocolPackage::ChannelConnectionRequest{ channel: channel.clone() };
         let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
         match response {
-            ProtocolPackage::Deny{ message } => Some((self.into(), Reaction::Deny{message})),
+            ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
                 let new_state = ServerChannelConnected {
                     server_socket: self.server_socket,
@@ -132,7 +138,7 @@ impl ServerConnectedAuthenticated {
         let message = ProtocolPackage::InfoListChannelsRequest;
         let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
         match response {
-            ProtocolPackage::Deny{ message } => Some((self.into(), Reaction::Deny{message})),
+            ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::InfoListChannelsReply{ channels } => Some((self.into(), Reaction::ChannelList(channels))),
             _ => Some((self.into(), Reaction::MalformedPackage)),
         }

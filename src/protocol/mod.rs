@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::result::Result as StdResult;
 
+use rust_state_machine::ToStatesAndOutput;
 use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
@@ -34,6 +35,8 @@ pub enum SendReceiveError {
     BinError(Box<bincode::ErrorKind>),
     IoError(std::io::Error),
 }
+
+pub struct Wrapper<E: Into<SendReceiveError>>(E);
 
 impl From<Box<bincode::ErrorKind>> for SendReceiveError {
     fn from(error: Box<bincode::ErrorKind>) -> Self {
@@ -78,4 +81,31 @@ impl HasServerConnection for TcpStream
     fn get_server_socket(&mut self) -> &mut TcpStream {
         self
     }
+}
+
+#[macro_export]
+macro_rules! impl_send_receive {
+    ( $reaction:ty, $not_connected:ident, $($x:ty),* ) => {
+        $(
+            impl<Edges> ::rust_state_machine::ToStatesAndOutput<$x, Edges, $reaction> for SendReceiveError 
+            where Edges: From<$not_connected> + From<$x>
+            {
+                fn context(self, state: $x) -> (Edges, $reaction) {
+                    match self {
+                        SendReceiveError::IoError(_) => ($not_connected.into(), self.into()),
+                        SendReceiveError::BinError(_) => (state.into(), self.into()),
+                    }
+
+                }
+            }
+
+            impl<Edges> ::rust_state_machine::ToStatesAndOutput<$x, Edges, $reaction> for std::io::Error 
+            where Edges: From<$not_connected> + From<$x>
+            {
+                fn context(self, state: $x) -> (Edges, $reaction) {
+                    SendReceiveError::IoError(self).context(state)
+                }
+            }
+        )*
+    };
 }

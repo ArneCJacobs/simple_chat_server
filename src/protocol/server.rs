@@ -3,23 +3,33 @@ use std::{sync::Arc, fmt::Debug};
 use rust_state_machine::{AsyncProgress, state_machine, with_context};
 use smol::{net::TcpStream, lock::Mutex};
 
-use crate::broker::{Broker, ErrorType};
+use crate::{broker::Broker, impl_send_receive};
 
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
 // ### STATES ###
 #[derive(Debug, Clone)]
-pub struct ClientConnection{ socket: TcpStream }
+pub struct ClientConnection{ 
+    pub socket: TcpStream 
+}
 #[derive(Debug, Clone)]
-pub struct ClientConnectionAuthenticated{ socket: TcpStream, username: String }
+pub struct ClientConnectionAuthenticated{ 
+    socket: TcpStream, 
+    username: String 
+}
 #[derive(Debug, Clone)]
-pub struct ClientChannelConnection{ socket: TcpStream, username: String, channel: String }
+pub struct ClientChannelConnection{ 
+    socket: TcpStream, 
+    username: String, 
+    channel: String 
+}
 pub struct Disconnected;
 pub struct SharedContext{ 
-    broker: Arc<Mutex<Broker>> 
+    pub broker: Arc<Mutex<Broker>> 
 } 
 
+#[derive(Debug)]
 pub enum Reaction {
     Success,
     Disconnected,
@@ -54,9 +64,11 @@ impl From<SendReceiveError> for Reaction {
     }
 }
 
+impl_send_receive!(Reaction, Disconnected, Disconnected, ClientConnection, ClientConnectionAuthenticated, ClientChannelConnection);
+
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConnection {
-   async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionEdges, Reaction)> {
+   async fn transition(mut self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionEdges, Reaction)> {
         let username = match input {
             ProtocolPackage::ServerAuthenticationRequest{ username } => username,
             ProtocolPackage::DisconnectNotification => return Some((Disconnected.into(), Reaction::Disconnected)),
