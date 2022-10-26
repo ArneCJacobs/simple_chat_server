@@ -19,8 +19,10 @@ pub struct ServerChannelConnected {
     channel: String,
     username: String,
 }
-// TODO: replace with both of these with ()
+// TODO: replace with with ()
+#[derive(Clone, Debug)]
 pub struct Shared;
+#[derive(Clone, Debug)]
 pub enum Input {
     ConnectServer(String),
     Authenticate(String),
@@ -31,6 +33,7 @@ pub enum Input {
     Disconnect,
 }
 
+#[derive(Debug)]
 pub enum Reaction {
     IoError(std::io::Error),
     BinError(Box<bincode::ErrorKind>),
@@ -102,6 +105,8 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
         };
         let message = ProtocolPackage::ServerAuthenticationRequest{ username: new_username.clone() };
         let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+
+        println!("HERE");
 
         match response {
             ProtocolPackage::Accept => {

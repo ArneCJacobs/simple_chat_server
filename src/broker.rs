@@ -28,6 +28,11 @@ impl Broker {
             usernames: HashSet::new(),
         }
     }
+    pub fn get_channels(&self) -> Vec<String> {
+        self.channels.keys()
+            .map(|s| s.clone())
+            .collect()
+    }
 
     pub fn subscribe(&mut self, channel: String, listener: TcpStream) {
         let key_string = format!("{:?}", listener);

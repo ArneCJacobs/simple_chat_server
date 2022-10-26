@@ -93,13 +93,29 @@ impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConn
         }
    } 
 }
+impl ClientConnectionAuthenticated {
+    async fn list_channels(mut self, shared: &mut SharedContext) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)>
+    {
+        let guard = shared.broker.lock_arc().await;
+        let channels = guard.get_channels();
+        std::mem::drop(guard);
+        let message = ProtocolPackage::InfoListChannelsReply{ channels };
+        with_context!(self.socket.send_package(message).await, self);
+        Some((self.into(), Reaction::Success))
+    }
+}
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientConnectionAuthenticatedEdges, ServerSideConnectionSM> for ClientConnectionAuthenticated {
     async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> {
-        todo!();  
+        match input {
+            ProtocolPackage::InfoListChannelsRequest => self.list_channels(shared).await,
+            ProtocolPackage::DisconnectNotification => return Some((Disconnected.into(), Reaction::Disconnected)),
+            _ => return Some((self.into(), Reaction::MalformedPackage)),
+        }
     } 
 }
+
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for ClientChannelConnection {
