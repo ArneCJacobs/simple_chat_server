@@ -78,35 +78,37 @@ impl ChatServer {
                 let shared = SharedContext { broker: broker.clone() };
                 let start_state = ClientConnection{ socket: stream.clone() };
                 let mut server_side_sm: StateMachineAsync<ServerSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
-                let mut res = None;
+                let mut res;
                 // TODO: move all this to internal logic, perhaps provide a consume function which
                 // is called in a loop
-                // TODO: implement a post process function for SM where certain states before 
-                while let Ok(message) = stream.receive_package().await {
-                    println!("RECEIVED MESSAGE: {:?}", message);
-                    res = server_side_sm.transition(message).await;
-                    println!("RESPONSE: {:?}", res);
-                    if let Some(Reaction::LostConnecion) = res {
-                        // TODO: this will never happen, the only state that is ever given with
-                        // Reaction::LostConnecion is Disconnected, maybe add some state to
-                        // disconnected? 
-                        if let Some(ServerSideConnectionSMStates::ClientChannelConnection(state)) = server_side_sm.get_current_state() {
-                            let ClientChannelConnection { channel, broker, username, .. } = state;
-                            let message_text = format!("{} LOST CONNECTION", username);
-                            let message = ProtocolPackage::ChatMessageSend{ message: message_text.to_string() };
-                            let mut guard = broker.lock_arc().await;
-                            guard.notify(channel.to_owned(), message).await;
+                loop {
+                    if let Ok(message) = stream.receive_package().await {
+                        println!("RECEIVED MESSAGE: {:?}", message);
+                        res = server_side_sm.transition(message).await;
+                        println!("RESPONSE: {:?}", res);
+                        if res.is_none() {
+                            break;
+                        }
+                        if let Some(Reaction::LostConnecion) = res {
+                            break;
+                        } else if let Some(Reaction::Disconnected) = res {
+                            break;
+                        }
+                    } else {
+                        println!();
+                        let state = std::mem::replace(server_side_sm.get_current_state(), None);
+                        match state {
+                            Some(ServerSideConnectionSMStates::ClientChannelConnection(state)) => state.shutdown(false).await,
+                            Some(ServerSideConnectionSMStates::ClientConnectionAuthenticated(state)) => state.shutdown().await,
+                            _ => {}
                         }
                     }
-                    if res.is_none() {
-                        break;
-                    }
+
                 }
 
                 if let Some(Reaction::LostConnecion) = res {
                     println!("CONNECTION LOST: {:?}", peer_addr);
-                    // TODO: send message to channel if it was connected to one
-                } else {
+                } else if let Some(Reaction::Disconnected) = res {
                     println!("CONNECTION ENDED: {:?}", peer_addr);
                 }
             })

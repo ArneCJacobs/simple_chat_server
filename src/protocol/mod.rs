@@ -19,11 +19,11 @@ pub enum ProtocolPackage {
     InfoListChannelsReply { channels: Vec<String> },
 
     ChannelConnectionRequest{ channel: String },
+    ChannelDisconnectNotification,
 
-    ChatMessageSend { message: String },
-    ChatMessageSendAccept,
+    ChatMessageSend { message: String }, // From client to server
 
-    ChatMessageReceive { username: String, message: String},
+    ChatMessageReceive { username: String, message: String}, // from server to client
 
     DisconnectNotification,
 
@@ -116,7 +116,7 @@ macro_rules! impl_send_receive {
             where Edges: From<$not_connected> + From<$x>
             {
                 fn context(self, state: $x) -> (Edges, $reaction) {
-                    SendReceiveError::IoError(self).context(state)
+                    ToStatesAndOutput::context(SendReceiveError::IoError(self), state)
                 }
             }
         )*

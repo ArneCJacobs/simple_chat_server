@@ -51,7 +51,7 @@ impl Broker {
                 .unwrap()
                 .push(listener);
         } else {
-           self.channels.insert(channel, vec![listener]);
+           self.channels.insert(channel.clone(), vec![listener]);
         }
         self.backwards.insert(key_string, channel);
         Ok(())
@@ -71,9 +71,11 @@ impl Broker {
         listeners.remove(index);
     }
 
-    pub async fn notify(&mut self, channel: String, message: ProtocolPackage) -> Result<(), Box<bincode::ErrorKind>> {
+    pub async fn notify(&mut self, channel: &String, message: ProtocolPackage) -> Result<(), Box<bincode::ErrorKind>> {
         let serialized = bincode::serialize(&message)?;
-        let listeners = self.channels.get_mut(&channel).unwrap();
+        let listeners = self.channels.get_mut(channel).unwrap();
+        // error are intentionally ignored as they need to be handled by SM which actually owns and
+        // handles the TcpConnection
         let futures: Vec<_> = listeners.iter_mut()
             .map(|listener| listener.write_all(&serialized))
             .collect();
