@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
 
-use crate::broker::ErrorType;
+use crate::broker::BrokerError;
 
 pub mod client;
 pub mod server;
@@ -28,7 +28,7 @@ pub enum ProtocolPackage {
     DisconnectNotification,
 
     Accept,
-    Deny { error: ErrorType },
+    Deny { error: BrokerError },
 }
 
 pub enum SendReceiveError {
@@ -75,8 +75,13 @@ pub trait HasServerConnection
     }
 
     async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
-        let socket = self.get_server_socket();
         let serialized = bincode::serialize(&message)?;
+        self.send_package_raw(&serialized).await?;
+        Ok(())
+    }
+
+    async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
+        let socket = self.get_server_socket();
         let len: u64 = serialized.len() as u64;
         socket.write_all(&len.to_le_bytes()).await?;
         socket.write_all(&serialized).await?;

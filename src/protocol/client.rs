@@ -1,7 +1,7 @@
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use smol::net::{TcpStream, TcpListener};
 
-use crate::{broker::ErrorType, impl_send_receive};
+use crate::{broker::BrokerError, impl_send_receive};
 
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
@@ -41,7 +41,7 @@ pub enum Reaction {
     ChannelList(Vec<String>),
     InvalidCommand,
     Success,
-    Deny { error: ErrorType }
+    Deny { error: BrokerError }
     // message from chat, disconnection notice, etc
 }
 
@@ -105,8 +105,6 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
         };
         let message = ProtocolPackage::ServerAuthenticationRequest{ username: new_username.clone() };
         let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
-
-        println!("HERE");
 
         match response {
             ProtocolPackage::Accept => {

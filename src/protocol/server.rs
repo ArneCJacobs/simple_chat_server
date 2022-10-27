@@ -1,9 +1,9 @@
 use std::{sync::Arc, fmt::Debug};
 
-use rust_state_machine::{AsyncProgress, state_machine, with_context};
+use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use smol::{net::TcpStream, lock::Mutex};
 
-use crate::{broker::Broker, impl_send_receive};
+use crate::{broker::{Broker, BrokerError}, impl_send_receive};
 
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
@@ -15,11 +15,13 @@ pub struct ClientConnection{
 }
 #[derive(Debug, Clone)]
 pub struct ClientConnectionAuthenticated{ 
+    broker: Arc<Mutex<Broker>>,
     socket: TcpStream, 
     username: String 
 }
 #[derive(Debug, Clone)]
 pub struct ClientChannelConnection{ 
+    broker: Arc<Mutex<Broker>>,
     socket: TcpStream, 
     username: String, 
     channel: String 
@@ -36,6 +38,7 @@ pub enum Reaction {
     LostConnecion,
     MalformedPackage,
     UsernameAlreadyTaken,
+    AlreadyConnectedToChannel{ channel: String },
     IoError(std::io::Error),
     BinError(Box<bincode::ErrorKind>),
 }
@@ -64,7 +67,48 @@ impl From<SendReceiveError> for Reaction {
     }
 }
 
-impl_send_receive!(Reaction, Disconnected, Disconnected, ClientConnection, ClientConnectionAuthenticated, ClientChannelConnection);
+impl_send_receive!(Reaction, Disconnected, Disconnected, ClientConnection, ClientChannelConnection, ClientConnectionAuthenticated);
+
+#[macro_export]
+macro_rules! impl_send_receive_deregister {
+    ( $reaction:ty, $not_connected:ident, $($x:ty),* ) => {
+        $(
+            impl<Edges> ::rust_state_machine::ToStatesAndOutput<$x, Edges, $reaction> for SendReceiveError 
+            where Edges: From<$not_connected> + From<$x>
+            {
+                fn context(self, state: $x) -> (Edges, $reaction) {
+                    match self {
+                        SendReceiveError::IoError(_) => {
+                            let mut guard = shared.broker.lock_arc().await;               
+                            guard.deregister_username(state.username);
+                            // TODO: also unsubscribe if has channel
+                            ($not_connected.into(), self.into())
+                        },
+                        SendReceiveError::BinError(_) => (state.into(), self.into()),
+                    }
+
+                }
+            }
+
+            impl<Edges> ::rust_state_machine::ToStatesAndOutput<$x, Edges, $reaction> for std::io::Error 
+            where Edges: From<$not_connected> + From<$x>
+            {
+                fn context(self, state: $x) -> (Edges, $reaction) {
+                    SendReceiveError::IoError(self).context(state)
+                }
+            }
+        )*
+    };
+}
+
+impl ToStatesAndOutput<ClientConnection, ClientConnectionEdges, Reaction> for BrokerError {
+    fn context(self, state: ClientConnection) -> (ClientConnectionEdges, Reaction) {
+        match self {
+            BrokerError::UsernameAlreadyExists => (state.into(), Reaction::UsernameAlreadyTaken),
+            _ => todo!() // this should never be possible;
+        }
+    }
+}
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConnection {
@@ -79,13 +123,14 @@ impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConn
         let res = guard.register_username(username.clone());
         std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
         if let Err(error) = res {
-            let message = ProtocolPackage::Deny{ error };
+            let message = ProtocolPackage::Deny{ error: error.clone() };
             with_context!(self.socket.send_package(message).await, self);
-            return Some((self.into(), Reaction::UsernameAlreadyTaken));
+            with_context!(Err(error), self)
         } else {
             let reply = ProtocolPackage::Accept;
             with_context!(self.socket.send_package(reply).await, self);
             let new_state = ClientConnectionAuthenticated {
+                broker: shared.broker.clone(),
                 socket: self.socket,
                 username,
             };
@@ -93,6 +138,15 @@ impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConn
         }
    } 
 }
+
+impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthenticatedEdges, Reaction> for BrokerError {
+    fn context(self, state: ClientConnectionAuthenticated) -> (ClientConnectionAuthenticatedEdges, Reaction) {
+        match self {
+            BrokerError::AlreadySubscribed{ channel } => (state.into(), Reaction::AlreadyConnectedToChannel{ channel }),
+            BrokerError::UsernameAlreadyExists => todo!() // this should never be possible,
+        }
+    }
+} 
 impl ClientConnectionAuthenticated {
     async fn list_channels(mut self, shared: &mut SharedContext) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)>
     {
@@ -100,8 +154,34 @@ impl ClientConnectionAuthenticated {
         let channels = guard.get_channels();
         std::mem::drop(guard);
         let message = ProtocolPackage::InfoListChannelsReply{ channels };
-        with_context!(self.socket.send_package(message).await, self);
+
+        if let Err(error) = self.socket.send_package(message).await {
+            let mut guard = shared.broker.lock_arc().await;
+            guard.deregister_username(&self.username);
+            std::mem::drop(guard);
+            with_context!(Err(error), self);
+        }
+
         Some((self.into(), Reaction::Success))
+    }
+
+    // TODO: join channel notification
+    async fn join_channel(mut self, shared: &mut SharedContext, channel: String) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> 
+    {
+        let mut guard = shared.broker.lock_arc().await;
+        let res = guard.subscribe(channel.clone(), self.socket.clone());
+        if let Err(error) = res {
+            let message = ProtocolPackage::Deny{ error: error.clone() };
+            with_context!(self.socket.send_package(message).await, self);
+            with_context!(Err(error), self);
+        }
+        let new_state = ClientChannelConnection {
+            broker: self.broker,
+            socket: self.socket,
+            username: self.username,
+            channel,
+        };
+        Some((new_state.into(), Reaction::Success))
     }
 }
 
@@ -110,17 +190,48 @@ impl AsyncProgress<ClientConnectionAuthenticatedEdges, ServerSideConnectionSM> f
     async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> {
         match input {
             ProtocolPackage::InfoListChannelsRequest => self.list_channels(shared).await,
-            ProtocolPackage::DisconnectNotification => return Some((Disconnected.into(), Reaction::Disconnected)),
+            ProtocolPackage::ChannelConnectionRequest{ channel } => self.join_channel(shared, channel).await,
+            ProtocolPackage::DisconnectNotification => {
+                let mut guard = shared.broker.lock_arc().await;
+                guard.deregister_username(&self.username);
+                return Some((Disconnected.into(), Reaction::Disconnected))
+            },
             _ => return Some((self.into(), Reaction::MalformedPackage)),
         }
     } 
 }
 
+impl ClientChannelConnection {
+    async fn send_message(self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
+        let message = ProtocolPackage::ChatMessageReceive { username: self.username, message };
+        let guard = shared.broker.lock_arc().await;
+        // guard.notify(self.channel, message);
+        // guard.notify(self.channel, message).await
+
+        // if let Err(error) = self.socket.send_package(message).await {
+        //     let mut guard = shared.broker.lock_arc().await;
+        //     guard.deregister_username(&self.username);
+        //     std::mem::drop(guard);
+        //     with_context!(Err(error), self);
+        // }
+        //
+        todo!();
+    } 
+}
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for ClientChannelConnection {
     async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientChannelConnectionEdges, Reaction)> {
-        todo!();  
+        match input {
+            ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
+            ProtocolPackage::DisconnectNotification => {
+                let mut guard = shared.broker.lock_arc().await;
+                guard.unsubscribe(&self.channel, &self.socket);
+                guard.deregister_username(&self.username);
+                return Some((Disconnected.into(), Reaction::Disconnected))
+            },
+            _ => return Some((self.into(), Reaction::MalformedPackage)),
+        }
     } 
 }
 

@@ -3,6 +3,8 @@ use futures::{AsyncWriteExt, future::join_all};
 use smol::net::TcpStream;
 use serde::{Serialize, Deserialize};
 
+use crate::protocol::ProtocolPackage;
+
 type TcpStreamKeyString = String;
 
 #[derive(Debug)]
@@ -12,9 +14,10 @@ pub struct Broker {
     usernames: HashSet<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum ErrorType {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BrokerError {
     UsernameAlreadyExists,
+    AlreadySubscribed{ channel: String },
 }
 
 
@@ -29,15 +32,19 @@ impl Broker {
         }
     }
     pub fn get_channels(&self) -> Vec<String> {
-        self.channels.keys()
-            .map(|s| s.clone())
+        self.channels.keys().cloned()
             .collect()
     }
 
-    pub fn subscribe(&mut self, channel: String, listener: TcpStream) {
-        let key_string = format!("{:?}", listener);
-        if self.backwards.contains_key(&key_string) {
-            self.unsubscribe(&channel, &listener);
+    fn get_key(listener: &TcpStream) -> String {
+        format!("{:?}", listener.peer_addr())
+    }
+
+    pub fn subscribe(&mut self, channel: String, listener: TcpStream) ->  Result<(), BrokerError>{
+        let key_string = Broker::get_key(&listener);
+        let res = self.backwards.get(&key_string);
+        if let Some(current_channel) = res {
+            return Err(BrokerError::AlreadySubscribed{ channel: current_channel.clone() });
         } 
         if self.channels.contains_key(&channel) {
             self.channels.get_mut(&channel)
@@ -46,31 +53,38 @@ impl Broker {
         } else {
            self.channels.insert(channel, vec![listener]);
         }
+        self.backwards.insert(key_string, channel);
+        Ok(())
     }
 
+    // TODO: if channel is empty, remove channel
+    // TODO: send message to the channel that the user has left
     pub fn unsubscribe(&mut self, channel: &String, listener: &TcpStream) {
-        let key_string = format!("{:?}", listener);
+        let key_string = Broker::get_key(listener);
         if !self.backwards.contains_key(&key_string){
             return;
         }
         self.backwards.remove(&key_string);
         let listeners = self.channels.get_mut(channel).unwrap();
-        let index = listeners.iter().position(|x| format!("{:?}", x) == key_string).unwrap();
+        let index = listeners.iter()
+            .position(|x| Broker::get_key(x) == key_string).unwrap();
         listeners.remove(index);
     }
 
-    pub async fn notify(&mut self, channel: String, message: String) {
+    pub async fn notify(&mut self, channel: String, message: ProtocolPackage) -> Result<(), Box<bincode::ErrorKind>> {
+        let serialized = bincode::serialize(&message)?;
         let listeners = self.channels.get_mut(&channel).unwrap();
         let futures: Vec<_> = listeners.iter_mut()
-            .map(|listener| listener.write_all((&message).as_bytes()))
+            .map(|listener| listener.write_all(&serialized))
             .collect();
 
         join_all(futures).await;
+        Ok(())
     }
 
-    pub fn register_username(&mut self, username: String) -> std::result::Result<(), ErrorType> {
+    pub fn register_username(&mut self, username: String) -> std::result::Result<(), BrokerError> {
         if self.usernames.contains(&username) {
-            return Err(ErrorType::UsernameAlreadyExists);
+            return Err(BrokerError::UsernameAlreadyExists);
         }
         self.usernames.insert(username);
         Ok(())
@@ -78,5 +92,11 @@ impl Broker {
 
     pub fn deregister_username(&mut self, username: &String) {
         self.usernames.remove(username);
+    }
+}
+
+impl Default for Broker {
+    fn default() -> Self {
+        Self::new()
     }
 }
