@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::result::Result as StdResult;
 
-use rust_state_machine::ToStatesAndOutput;
 use serde::{Serialize, Deserialize};
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
@@ -10,6 +9,7 @@ use crate::broker::BrokerError;
 
 pub mod client;
 pub mod server;
+pub mod ProtocolPackageStream;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ProtocolPackage {

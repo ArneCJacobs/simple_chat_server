@@ -77,13 +77,14 @@ impl ChatServer {
                 let shared = SharedContext { broker: broker.clone() };
                 let start_state = ClientConnection{ socket: stream };
                 let mut server_side_sm: StateMachineAsync<ServerSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
-                let result;
+                let mut result = None;
                 loop {
                     let res = server_side_sm.transition(()).await;
                     println!("RESPONSE: {:?}", res);
                     if res.is_none() {
-                        result = res;
                         break;
+                    } else {
+                        result = res;
                     }
                 } 
                 if let Some(Reaction::LostConnecion) = result {

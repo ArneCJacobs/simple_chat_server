@@ -61,14 +61,6 @@ state_machine! {
     }
 }
 
-// impl ToStatesAndOutput<NotConnected, NotConnectedEdges, Reaction> for std::io::Error {
-//     fn context(self, state: NotConnected) -> (NotConnectedEdges, Reaction) {
-//        (state.into(), Reaction::IoError(self))  
-//     }
-// }
-//
-
-
 impl_send_receive!(Reaction, NotConnected, NotConnected, ServerConnected, ServerConnectedAuthenticated, ServerChannelConnected);
 
 impl From<SendReceiveError> for Reaction {
@@ -125,6 +117,7 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
+                let socket = self.server_socket.
                 let new_state = ServerChannelConnected {
                     server_socket: self.server_socket,
                     username: self.username,
@@ -196,7 +189,7 @@ impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for Serv
             Input::SendMessage(message) => self.send_message(message).await,
             Input::DisconnectChannel => self.disconnect_channel().await,
             Input::Disconnect => self.server_socket.disconnect().await,
-            _ => Some((self.into(), Reaction::MalformedPackage))
+            _ => Some((self.into(), Reaction::InvalidCommand))
         }
     } 
 }
