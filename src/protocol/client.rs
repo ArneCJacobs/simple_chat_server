@@ -117,6 +117,8 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
+                // TODO: make a filtered channel where all protocol messages which indicate a
+                // received chat message are handeled seperately
                 let new_state = ServerChannelConnected {
                     server_socket: self.server_socket,
                     username: self.username,

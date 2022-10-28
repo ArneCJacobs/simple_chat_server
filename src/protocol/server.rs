@@ -242,8 +242,9 @@ impl ClientChannelConnection {
     async fn send_message(mut self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
         let message = ProtocolPackage::ChatMessageReceive { username: self.username.clone(), message };
         let mut guard = shared.broker.lock_arc().await;
+
         with_context!(guard.notify(&self.channel, message).await, self);
-        //
+
         let message = ProtocolPackage::Accept;
         async_with_context!(self.socket.send_package(message).await, self);
         Some((self.into(), Reaction::Success))
