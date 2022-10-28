@@ -70,7 +70,7 @@ pub trait HasServerConnection
         let mut buffer: Vec<u8> = vec![0; len.try_into().unwrap()];
         socket.read_exact(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
-        // println!("RECEIVED PACKAGE {:?}", received_message);
+        println!("RECEIVED PACKAGE {:?}", received_message);
         Ok(received_message)
     }
 

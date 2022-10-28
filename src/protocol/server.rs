@@ -2,11 +2,8 @@ use std::{sync::Arc, fmt::Debug};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
 use smol::{net::TcpStream, lock::Mutex};
-
 use crate::{broker::{Broker, BrokerError}, impl_send_receive};
-
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
-
 
 // ### STATES ###
 #[derive(Debug, Clone)]
@@ -42,6 +39,7 @@ pub enum Reaction {
     IoError(std::io::Error),
     BinError(Box<bincode::ErrorKind>),
 }
+type Input = ();
 
 state_machine!{
     pub
@@ -49,7 +47,7 @@ state_machine!{
     Name(ServerSideConnectionSM)
     Start(ClientConnection)
     SharedContext(SharedContext)
-    Input(ProtocolPackage)
+    Input(Input)
     Output(Reaction)
     Edges {
         ClientConnection => [Disconnected, ClientConnection, ClientConnectionAuthenticated],
@@ -81,7 +79,8 @@ impl ToStatesAndOutput<ClientConnection, ClientConnectionEdges, Reaction> for Br
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConnection {
-   async fn transition(mut self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionEdges, Reaction)> {
+   async fn transition(mut self, shared: &mut SharedContext, _: ()) -> Option<(ClientConnectionEdges, Reaction)> {
+        let input = with_context!(self.socket.receive_package().await, self);
         let username = match input {
             ProtocolPackage::ServerAuthenticationRequest{ username } => username,
             ProtocolPackage::DisconnectNotification => return Some((Disconnected.into(), Reaction::Disconnected)),
@@ -120,7 +119,7 @@ impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthentica
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthenticatedEdges, Reaction> for std::io::Error {
     async fn context(self, state: ClientConnectionAuthenticated) -> (ClientConnectionAuthenticatedEdges, Reaction) {
-        state.shutdown();
+        state.shutdown().await;
         (Disconnected.into(), Reaction::IoError(self))
     }
 }
@@ -183,7 +182,8 @@ impl ClientConnectionAuthenticated {
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientConnectionAuthenticatedEdges, ServerSideConnectionSM> for ClientConnectionAuthenticated {
-    async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> {
+    async fn transition(mut self, shared: &mut SharedContext, _: ()) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> {
+        let input = async_with_context!(self.socket.receive_package().await, self);
         match input {
             ProtocolPackage::InfoListChannelsRequest => self.list_channels(shared).await,
             ProtocolPackage::ChannelConnectionRequest{ channel } => self.join_channel(shared, channel).await,
@@ -202,6 +202,24 @@ impl ToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdges, Re
     }
 }
 
+#[::rust_state_machine::async_trait::async_trait]
+impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdges, Reaction> for std::io::Error {
+    async fn context(self, state: ClientChannelConnection) -> (ClientChannelConnectionEdges, Reaction) {
+        state.shutdown(false);
+        (Disconnected.into(), Reaction::LostConnecion)
+    }
+}
+
+#[::rust_state_machine::async_trait::async_trait]
+impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdges, Reaction> for SendReceiveError {
+    async fn context(self, state: ClientChannelConnection) -> (ClientChannelConnectionEdges, Reaction) {
+        match self {
+            SendReceiveError::BinError(error) => ToStatesAndOutput::context(error, state),
+            SendReceiveError::IoError(error) => AsyncToStatesAndOutput::context(error, state).await,
+        }
+    }
+}
+
 impl ClientChannelConnection {
     async fn send_message(self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
         let message = ProtocolPackage::ChatMessageReceive { username: self.username.clone(), message };
@@ -215,21 +233,25 @@ impl ClientChannelConnection {
         guard.unsubscribe(&self.channel, &self.socket);
         guard.deregister_username(&self.username);
 
-        let message = if intentional {
-            ProtocolPackage::ChatMessageReceive { username: self.username, message: "Disc".to_string() }
+        let message_text = if intentional {
+            format!("{} DISCONNECTED", self.username)
         } else {
-            ProtocolPackage::ChatMessageReceive { 
-                username: "CHANNEL".to_string(), 
-                message: format!("{} LOST CONNECTION", self.username) 
-            }
+            format!("{} LOST CONNECTION", self.username)
         };
-        guard.notify(&self.channel, message);
+        let message = ProtocolPackage::ChatMessageReceive { 
+            username: "CHANNEL".to_string(), 
+            message: message_text 
+        };
+ 
+        guard.notify(&self.channel, message).await
+            .expect("Could not serialize message");
     }
 }
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for ClientChannelConnection {
-    async fn transition(self, shared: &mut SharedContext, input: ProtocolPackage) -> Option<(ClientChannelConnectionEdges, Reaction)> {
+    async fn transition(mut self, shared: &mut SharedContext, _: ()) -> Option<(ClientChannelConnectionEdges, Reaction)> {
+        let input = async_with_context!(self.socket.receive_package().await, self);
         match input {
             ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
             ProtocolPackage::ChannelDisconnectNotification => {
@@ -245,7 +267,6 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
                 
             },
             ProtocolPackage::DisconnectNotification => {
-                let mut guard = shared.broker.lock_arc().await;
                 self.shutdown(true).await;
                 return Some((Disconnected.into(), Reaction::Disconnected))
             },

@@ -6,15 +6,14 @@ mod protocol;
 mod broker;
 
 use broker::Broker;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use smol::Timer;
 use smol::{net::TcpListener, lock::Mutex};
 
 use crate::protocol::client::{ClientSideConnectionSM, Input, NotConnected, Shared};
-use crate::protocol::{HasServerConnection, ProtocolPackage, server::ClientConnection};
-use crate::protocol::server::{ClientChannelConnection, Reaction, ServerSideConnectionSM, ServerSideConnectionSMStates, SharedContext};
+use crate::protocol::{HasServerConnection,server::ClientConnection};
+use crate::protocol::server::{Reaction, ServerSideConnectionSM, ServerSideConnectionSMStates, SharedContext};
 use rust_state_machine::{StateMachineAsync, StatefulAsyncStateMachine};
-
 
 const ADDR: &str = "127.0.0.1:8080";
 
@@ -72,43 +71,24 @@ impl ChatServer {
         self.socket
             .incoming()
             .for_each_concurrent(None, |stream| async move {
-                let mut stream = stream.unwrap();
+                let stream = stream.unwrap();
                 let peer_addr = stream.peer_addr();
                 println!("NEW CONNECTION: {:?}", peer_addr);
                 let shared = SharedContext { broker: broker.clone() };
-                let start_state = ClientConnection{ socket: stream.clone() };
+                let start_state = ClientConnection{ socket: stream };
                 let mut server_side_sm: StateMachineAsync<ServerSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
-                let mut res;
-                // TODO: move all this to internal logic, perhaps provide a consume function which
-                // is called in a loop
+                let result;
                 loop {
-                    if let Ok(message) = stream.receive_package().await {
-                        println!("RECEIVED MESSAGE: {:?}", message);
-                        res = server_side_sm.transition(message).await;
-                        println!("RESPONSE: {:?}", res);
-                        if res.is_none() {
-                            break;
-                        }
-                        if let Some(Reaction::LostConnecion) = res {
-                            break;
-                        } else if let Some(Reaction::Disconnected) = res {
-                            break;
-                        }
-                    } else {
-                        println!();
-                        let state = std::mem::replace(server_side_sm.get_current_state(), None);
-                        match state {
-                            Some(ServerSideConnectionSMStates::ClientChannelConnection(state)) => state.shutdown(false).await,
-                            Some(ServerSideConnectionSMStates::ClientConnectionAuthenticated(state)) => state.shutdown().await,
-                            _ => {}
-                        }
+                    let res = server_side_sm.transition(()).await;
+                    println!("RESPONSE: {:?}", res);
+                    if res.is_none() {
+                        result = res;
+                        break;
                     }
-
-                }
-
-                if let Some(Reaction::LostConnecion) = res {
+                } 
+                if let Some(Reaction::LostConnecion) = result {
                     println!("CONNECTION LOST: {:?}", peer_addr);
-                } else if let Some(Reaction::Disconnected) = res {
+                } else if let Some(Reaction::Disconnected) = result {
                     println!("CONNECTION ENDED: {:?}", peer_addr);
                 }
             })
