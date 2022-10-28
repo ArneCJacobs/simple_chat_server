@@ -34,7 +34,8 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
                 Input::Authenticate("Steam".to_string()),
                 Input::GetChannelsList,
                 Input::ConnectChannel("Welcome".to_string()),
-                Input::Disconnect,
+                Input::SendMessage("Hello Chat".to_string()),
+                // Input::Disconnect,
             ];
 
             for command in commands {

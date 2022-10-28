@@ -61,20 +61,24 @@ pub trait HasServerConnection
     }
 
     async fn receive_package(&mut self) -> StdResult<ProtocolPackage, SendReceiveError> {
-        // println!("RECEIVING PACKAGE");
+        println!("RECEIVING PACKAGE");
         let socket = self.get_server_socket();
         let mut length_buffer = [0; 8];
         socket.read_exact(&mut length_buffer).await?;
         let len: u64 = u64::from_le_bytes(length_buffer);
-        // println!("DATA HAS LENGTH: {:?}", len);
+        println!("DATA HAS LENGTH: {:?}", len);
+        if len > 1000 {
+            panic!("The received message has supposed length {}, which is larger then the maximum allowed length", len);
+        }
         let mut buffer: Vec<u8> = vec![0; len.try_into().unwrap()];
         socket.read_exact(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
-        // println!("RECEIVED PACKAGE {:?}", received_message);
+        println!("RECEIVED PACKAGE {:?}", received_message);
         Ok(received_message)
     }
 
     async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
+        println!("SENDING PACKAGE {:?}", message);
         let serialized = bincode::serialize(&message)?;
         self.send_package_raw(&serialized).await?;
         Ok(())

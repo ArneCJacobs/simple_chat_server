@@ -3,7 +3,7 @@ use futures::{AsyncWriteExt, future::join_all};
 use smol::net::TcpStream;
 use serde::{Serialize, Deserialize};
 
-use crate::protocol::ProtocolPackage;
+use crate::protocol::{ProtocolPackage, HasServerConnection};
 
 type TcpStreamKeyString = String;
 
@@ -77,7 +77,7 @@ impl Broker {
         // error are intentionally ignored as they need to be handled by SM which actually owns and
         // handles the TcpConnection
         let futures: Vec<_> = listeners.iter_mut()
-            .map(|listener| listener.write_all(&serialized))
+            .map(|listener| listener.send_package_raw(&serialized))
             .collect();
 
         join_all(futures).await;

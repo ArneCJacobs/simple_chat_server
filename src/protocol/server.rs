@@ -1,7 +1,7 @@
-use std::{sync::Arc, fmt::Debug};
+use std::{sync::Arc, fmt::Debug, time::Duration};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
-use smol::{net::TcpStream, lock::Mutex, io::AsyncWriteExt};
+use smol::{net::TcpStream, lock::Mutex, io::AsyncWriteExt, Timer};
 use crate::{broker::{Broker, BrokerError}, impl_send_receive};
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
@@ -177,7 +177,8 @@ impl ClientConnectionAuthenticated {
             username: "CHANNEL".to_string(), 
             message: format!("{} JOINED CHANNEL", self.username) 
         };
-        with_context!(guard.notify(&channel, message).await, self);
+        // TODO: all notify calls mess up client
+        // with_context!(guard.notify(&channel, message).await, self);
         std::mem::drop(guard);
 
         let new_state = ClientChannelConnection {
@@ -238,10 +239,13 @@ impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdge
 }
 
 impl ClientChannelConnection {
-    async fn send_message(self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
+    async fn send_message(mut self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
         let message = ProtocolPackage::ChatMessageReceive { username: self.username.clone(), message };
         let mut guard = shared.broker.lock_arc().await;
         with_context!(guard.notify(&self.channel, message).await, self);
+        //
+        let message = ProtocolPackage::Accept;
+        async_with_context!(self.socket.send_package(message).await, self);
         Some((self.into(), Reaction::Success))
     } 
 
