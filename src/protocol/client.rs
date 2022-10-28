@@ -1,9 +1,9 @@
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
-use smol::net::{TcpStream, TcpListener};
+use smol::{net::{TcpStream, TcpListener}, io::AsyncWriteExt};
 
 use crate::{broker::BrokerError, impl_send_receive};
 
-use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
+use super::{HasServerConnection, ProtocolPackage, SendReceiveError, protocol_package_stream};
 
 
 // ### STATES ###
@@ -117,7 +117,6 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
-                let socket = self.server_socket.
                 let new_state = ServerChannelConnected {
                     server_socket: self.server_socket,
                     username: self.username,
@@ -156,12 +155,24 @@ impl AsyncProgress<ServerConnectedAuthenticatedEdges, ClientSideConnectionSM> fo
 impl ServerChannelConnected {
     async fn send_message(mut self, message: String) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
-        todo!();
+        let message = ProtocolPackage::ChatMessageSend { message };
+        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        match reply {
+            ProtocolPackage::Accept => Some((self.into(), Reaction::Success)),
+            // ProtocolPackage::Deny { error } => Some((self.into(), error.into())),
+            _ => Some((self.into(), Reaction::MalformedPackage))
+        }
     }
 
     async fn disconnect_channel(mut self) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
-        todo!();
+        let message = ProtocolPackage::ChannelDisconnectNotification;
+        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        match reply {
+            ProtocolPackage::Accept => Some((self.into(), Reaction::Success)),
+            // ProtocolPackage::Deny { error } => Some((self.into(), error.into())),
+            _ => Some((self.into(), Reaction::MalformedPackage))
+        }
     }
 }
 
@@ -176,7 +187,12 @@ impl<T:HasServerConnection + Send, D: From<NotConnected> + Send> Disconnect<D> f
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
         match self.get_server_socket().send_package(message).await {
-            Ok(_) => Some((NotConnected.into(), Reaction::Success)),
+            Ok(_) => {
+                match self.get_server_socket().close().await {
+                    Ok(_) => Some((NotConnected.into(), Reaction::Success)),
+                    Err(error) => Some((NotConnected.into(), Reaction::IoError(error)))
+                }
+            },
             Err(error) => Some((NotConnected.into(), error.into())),
         }
     }
@@ -193,52 +209,3 @@ impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for Serv
         }
     } 
 }
-
-
-
-// ### EDGES ###
-// #[derive(Debug, Clone)]
-// pub enum NotConnectedEdges {
-//     Connect(ClientSideConnectionFMS<ServerConnected>),
-// }
-//
-// #[derive(Debug, Clone)]
-// pub enum ServerConnectedEdges {
-//     Disconnected,
-//     Authenticated(ClientSideConnectionFMS<ServerConnectedAuthenticated>),
-// }
-
-// ### FSM ###
-
-// #[derive(Debug, Clone)]
-// pub struct ClientSideConnectionFMS<S: Clone> {
-//     state: S,
-// }
-
-// impl ClientSideConnectionFMS<NotConnected> {
-//     pub fn new() -> Self {
-//         ClientSideConnectionFMS { state: NotConnected }
-//     }
-//
-//     pub async fn connect(addr: String) -> CResult<ServerConnected, NotConnected> {
-//         let tcp_connection = TcpStream::connect(addr).await?;
-//         Ok(ClientSideConnectionFMS {
-//             state: ServerConnected{ server_socket: tcp_connection }
-//         })
-//     }
-// }
-//
-// impl ClientSideConnectionFMS<ServerConnected> {
-//     pub async fn authenticate(mut self, username: String) -> CResult<ServerConnectedAuthenticated, ServerConnected> {
-//         use ProtocolPackage::*;
-//         let message = ServerConnectionRequest { username };
-//         let reply: ClientResult<ProtocolPackage, ServerConnected> = self.state.server_socket.send_package_and_receive(message).await;
-//         let reply = reply?;
-//
-//         match reply {
-//             ServerConnectedAuthenticated => Ok(),
-//             ServerConnect
-//         }
-//     }
-// }
-

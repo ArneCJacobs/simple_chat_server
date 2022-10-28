@@ -1,7 +1,8 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 use std::result::Result as StdResult;
 
 use serde::{Serialize, Deserialize};
+use smol::Timer;
 use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
 
@@ -9,7 +10,7 @@ use crate::broker::BrokerError;
 
 pub mod client;
 pub mod server;
-pub mod ProtocolPackageStream;
+pub mod protocol_package_stream;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ProtocolPackage {
@@ -31,12 +32,11 @@ pub enum ProtocolPackage {
     Deny { error: BrokerError },
 }
 
+#[derive(Debug)]
 pub enum SendReceiveError {
     BinError(Box<bincode::ErrorKind>),
     IoError(std::io::Error),
 }
-
-pub struct Wrapper<E: Into<SendReceiveError>>(E);
 
 impl From<Box<bincode::ErrorKind>> for SendReceiveError {
     fn from(error: Box<bincode::ErrorKind>) -> Self {
@@ -70,7 +70,7 @@ pub trait HasServerConnection
         let mut buffer: Vec<u8> = vec![0; len.try_into().unwrap()];
         socket.read_exact(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
-        println!("RECEIVED PACKAGE {:?}", received_message);
+        // println!("RECEIVED PACKAGE {:?}", received_message);
         Ok(received_message)
     }
 
@@ -84,7 +84,7 @@ pub trait HasServerConnection
         let socket = self.get_server_socket();
         let len: u64 = serialized.len() as u64;
         socket.write_all(&len.to_le_bytes()).await?;
-        socket.write_all(&serialized).await?;
+        socket.write_all(serialized).await?;
         Ok(())
     }
 }

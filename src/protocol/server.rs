@@ -1,7 +1,7 @@
 use std::{sync::Arc, fmt::Debug};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
-use smol::{net::TcpStream, lock::Mutex};
+use smol::{net::TcpStream, lock::Mutex, io::AsyncWriteExt};
 use crate::{broker::{Broker, BrokerError}, impl_send_receive};
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
@@ -140,6 +140,11 @@ impl From<Box<bincode::ErrorKind>> for Reaction {
     }
 }
 
+impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthenticatedEdges, Reaction> for Box<bincode::ErrorKind> {
+    fn context(self, state: ClientConnectionAuthenticated) -> (ClientConnectionAuthenticatedEdges, Reaction) {
+        (state.into(), self.into())
+    }
+}
 
 
 impl ClientConnectionAuthenticated {
@@ -165,6 +170,16 @@ impl ClientConnectionAuthenticated {
             async_with_context!(self.socket.send_package(message).await, self);
             with_context!(Err(error), self);
         }
+        let message = ProtocolPackage::Accept;
+        async_with_context!(self.socket.send_package(message).await, self);
+
+        let message = ProtocolPackage::ChatMessageReceive { 
+            username: "CHANNEL".to_string(), 
+            message: format!("{} JOINED CHANNEL", self.username) 
+        };
+        with_context!(guard.notify(&channel, message).await, self);
+        std::mem::drop(guard);
+
         let new_state = ClientChannelConnection {
             broker: self.broker,
             socket: self.socket,
@@ -174,7 +189,9 @@ impl ClientConnectionAuthenticated {
         Some((new_state.into(), Reaction::Success))
     }
 
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
+        self.socket.close().await.ok(); // Don't care if successful or not, either way the channel
+        // will be disconnected
         let mut guard = self.broker.lock_arc().await;
         guard.deregister_username(&self.username);
     }
@@ -205,7 +222,7 @@ impl ToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdges, Re
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdges, Reaction> for std::io::Error {
     async fn context(self, state: ClientChannelConnection) -> (ClientChannelConnectionEdges, Reaction) {
-        state.shutdown(false);
+        state.shutdown(false).await;
         (Disconnected.into(), Reaction::LostConnecion)
     }
 }
@@ -228,7 +245,9 @@ impl ClientChannelConnection {
         Some((self.into(), Reaction::Success))
     } 
 
-    pub async fn shutdown(self, intentional: bool) {
+    pub async fn shutdown(mut self, intentional: bool) {
+        self.socket.close().await.ok(); // Don't care if successful or not, either way the channel
+        // will be disconnected
         let mut guard = self.broker.lock_arc().await;
         guard.unsubscribe(&self.channel, &self.socket);
         guard.deregister_username(&self.username);
@@ -245,6 +264,7 @@ impl ClientChannelConnection {
  
         guard.notify(&self.channel, message).await
             .expect("Could not serialize message");
+
     }
 }
 
