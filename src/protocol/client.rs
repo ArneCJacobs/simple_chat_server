@@ -126,7 +126,8 @@ impl ServerConnectedAuthenticated {
                 let (s2, r2) = channel::unbounded();
                 let stream = to_protocolpackage_stream(self.server_socket.clone());
                 let mut stream = Box::pin(stream);
-                smol::spawn(async move {
+                let _ = smol::spawn(async move {
+                    println!("FUCKING YEET");
                     while !s1.is_closed() {
                         let package = stream.next().await;
                         if package.is_none() {
@@ -134,16 +135,16 @@ impl ServerConnectedAuthenticated {
                         }
                         let package = package.unwrap();
                         if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
-                            s2.send(new_package);
+                            s2.send(new_package).await.unwrap();
                         } else {
-                            s1.send(package);
+                            s1.send(package).await.unwrap();
                         }
                     }
                     s1.close();
                     s2.close();
                 });
 
-                smol::spawn(async move {
+                let _ = smol::spawn(async move {
                     while !r2.is_closed() {
                         let package = r2.recv().await;
                         println!("RECEIVED MESSAGE: {:?}", package);

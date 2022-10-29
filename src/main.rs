@@ -7,7 +7,7 @@ mod broker;
 
 use broker::Broker;
 use futures::StreamExt;
-use smol::Timer;
+use smol::{Timer, Executor, LocalExecutor};
 use smol::{net::TcpListener, lock::Mutex};
 
 use crate::protocol::client::{ClientSideConnectionSM, Input, NotConnected, Shared};
@@ -17,8 +17,13 @@ use rust_state_machine::{StateMachineAsync, StatefulAsyncStateMachine};
 const ADDR: &str = "127.0.0.1:8080";
 
 fn main() -> std::result::Result<(), Box<dyn Error>> {
-    smol::block_on(async {
+    let (send, recv) = smol::channel::unbounded::<()>();
+    let executor = LocalExecutor::new();
+
+    let _ = executor.spawn(async {
+        println!("HELLO");
         let args: Vec<String> = env::args().collect();
+        // TODO: separate bins
         if args[1] == "listen" {
             println!("Listening on {}", ADDR);
             let mut server = ChatServer::new(ADDR.to_string()).await.unwrap();
@@ -45,10 +50,16 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
             }
             // start_client(ADDR.to_string())?;
             println!("DONE");
+            send.close();
         }
 
     });
-    
+    // while !recv.is_closed() {
+    //     if executor.try_tick() {
+    //         println!("HELLOOOOOOOOOOOOOOOOOOOOOoooooooo");
+    //     }
+    //     // println!("{}", executor.try_tick());
+    // }
     Ok(())
 }
 
