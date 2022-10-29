@@ -27,6 +27,7 @@ pub enum ProtocolPackage {
     ChatMessageReceive { username: String, message: String}, // from server to client
 
     DisconnectNotification,
+    MalformedPackage,
 
     Accept,
     Deny { error: BrokerError },

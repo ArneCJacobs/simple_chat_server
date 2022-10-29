@@ -1,9 +1,11 @@
+use futures::Stream;
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
-use smol::{net::{TcpStream, TcpListener}, io::AsyncWriteExt};
+use smol::{net::{TcpStream, TcpListener}, io::AsyncWriteExt, channel::Receiver, stream::StreamExt};
+use smol::channel;
 
 use crate::{broker::BrokerError, impl_send_receive};
 
-use super::{HasServerConnection, ProtocolPackage, SendReceiveError, protocol_package_stream};
+use super::{HasServerConnection, ProtocolPackage, SendReceiveError, protocol_package_stream::{self, print_type_of, to_protocolpackage_stream}};
 
 
 // ### STATES ###
@@ -13,12 +15,13 @@ pub struct NotConnected;
 pub struct ServerConnected { server_socket: TcpStream }
 #[derive(Clone, Debug)]
 pub struct ServerConnectedAuthenticated { server_socket: TcpStream, username: String }
-#[derive(Clone, Debug)]
 pub struct ServerChannelConnected { 
-    server_socket: TcpStream,
+    connection: TcpStream,
+    packages: Receiver<Result<ProtocolPackage, SendReceiveError>>,
     channel: String,
     username: String,
 }
+
 // TODO: replace with with ()
 #[derive(Clone, Debug)]
 pub struct Shared;
@@ -119,8 +122,37 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Accept => {
                 // TODO: make a filtered channel where all protocol messages which indicate a
                 // received chat message are handeled seperately
+                let (s1, r1) = channel::unbounded();
+                let (s2, r2) = channel::unbounded();
+                let stream = to_protocolpackage_stream(self.server_socket.clone());
+                let mut stream = Box::pin(stream);
+                smol::spawn(async move {
+                    while !s1.is_closed() {
+                        let package = stream.next().await;
+                        if package.is_none() {
+                            break;
+                        }
+                        let package = package.unwrap();
+                        if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
+                            s2.send(new_package);
+                        } else {
+                            s1.send(package);
+                        }
+                    }
+                    s1.close();
+                    s2.close();
+                });
+
+                smol::spawn(async move {
+                    while !r2.is_closed() {
+                        let package = r2.recv().await;
+                        println!("RECEIVED MESSAGE: {:?}", package);
+                    }
+                });
+                // let filtered_stream = stream.lef
                 let new_state = ServerChannelConnected {
-                    server_socket: self.server_socket,
+                    connection: self.server_socket,
+                    packages: r1,
                     username: self.username,
                     channel,
                 };
@@ -137,7 +169,8 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::InfoListChannelsReply{ channels } => Some((self.into(), Reaction::ChannelList(channels))),
-            _ => Some((self.into(), Reaction::MalformedPackage)),
+            _ => Some((self.into(), Reaction::MalformedPackage)), // TODO: send malformed package
+            // notification back
         }
     }
 }
@@ -158,7 +191,10 @@ impl ServerChannelConnected {
     async fn send_message(mut self, message: String) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
         let message = ProtocolPackage::ChatMessageSend { message };
-        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        with_context!(self.connection.send_package(message).await, self);
+
+        // TODO: no unwrap here
+        let reply = with_context!(self.packages.recv().await.unwrap(), self); 
         match reply {
             ProtocolPackage::Accept => Some((self.into(), Reaction::Success)),
             // ProtocolPackage::Deny { error } => Some((self.into(), error.into())),
@@ -169,9 +205,19 @@ impl ServerChannelConnected {
     async fn disconnect_channel(mut self) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
         let message = ProtocolPackage::ChannelDisconnectNotification;
-        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self);
+        with_context!(self.connection.send_package(message).await, self);
+
+        // TODO: no unwrap here
+        let reply = with_context!(self.packages.recv().await.unwrap(), self); 
         match reply {
-            ProtocolPackage::Accept => Some((self.into(), Reaction::Success)),
+            ProtocolPackage::Accept => {
+                self.packages.close();
+                let new_state = ServerConnectedAuthenticated {
+                    server_socket: self.connection,
+                    username: self.username,
+                };
+                Some((new_state.into(), Reaction::Success)) 
+            },
             // ProtocolPackage::Deny { error } => Some((self.into(), error.into())),
             _ => Some((self.into(), Reaction::MalformedPackage))
         }
@@ -206,7 +252,10 @@ impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for Serv
         match input {
             Input::SendMessage(message) => self.send_message(message).await,
             Input::DisconnectChannel => self.disconnect_channel().await,
-            Input::Disconnect => self.server_socket.disconnect().await,
+            Input::Disconnect => {
+                self.packages.close();
+                self.connection.disconnect().await
+            },
             _ => Some((self.into(), Reaction::InvalidCommand))
         }
     } 
