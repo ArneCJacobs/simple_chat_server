@@ -21,6 +21,8 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
     // construct a subscriber that prints formatted traces to stdout
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
+        .without_time()
+        .with_target(false)
         .finish();
     // use that subscriber to process traces emitted after this point
     tracing::subscriber::set_global_default(subscriber)?;
