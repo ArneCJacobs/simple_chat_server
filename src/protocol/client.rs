@@ -127,7 +127,7 @@ impl ServerConnectedAuthenticated {
                 let stream = to_protocolpackage_stream(self.server_socket.clone());
                 let mut stream = Box::pin(stream);
                 let _ = smol::spawn(async move {
-                    println!("FUCKING YEET");
+                    tracing::debug!("FUCKING YEET");
                     while !s1.is_closed() {
                         let package = stream.next().await;
                         if package.is_none() {
@@ -147,7 +147,7 @@ impl ServerConnectedAuthenticated {
                 let _ = smol::spawn(async move {
                     while !r2.is_closed() {
                         let package = r2.recv().await;
-                        println!("RECEIVED MESSAGE: {:?}", package);
+                        tracing::debug!("RECEIVED MESSAGE: {:?}", package);
                     }
                 });
                 // let filtered_stream = stream.lef
