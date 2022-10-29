@@ -1,9 +1,8 @@
-use std::{fmt::Debug, time::Duration};
-use std::result::Result as StdResult;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use crate::TcpStream;
+use std::{fmt::Debug, result::Result as StdResult};
 
 use serde::{Serialize, Deserialize};
-use smol::Timer;
-use smol::{net::TcpStream, io::{AsyncWriteExt, AsyncReadExt}};
 use async_trait::async_trait;
 
 use crate::broker::BrokerError;

@@ -1,23 +1,23 @@
-use futures::Stream;
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
-use smol::{net::{TcpStream, TcpListener}, io::AsyncWriteExt, channel::Receiver, stream::StreamExt};
-use smol::channel;
-
+use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc::{UnboundedReceiver, self};
 use crate::{broker::BrokerError, impl_send_receive};
 
-use super::{HasServerConnection, ProtocolPackage, SendReceiveError, protocol_package_stream::{self, print_type_of, to_protocolpackage_stream}};
+use crate::TcpStream;
+
+use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
 // ### STATES ###
 #[derive(Clone, Debug)]
 pub struct NotConnected;
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ServerConnected { server_socket: TcpStream }
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ServerConnectedAuthenticated { server_socket: TcpStream, username: String }
 pub struct ServerChannelConnected { 
     connection: TcpStream,
-    packages: Receiver<Result<ProtocolPackage, SendReceiveError>>,
+    packages: UnboundedReceiver<Result<ProtocolPackage, SendReceiveError>>,
     channel: String,
     username: String,
 }
@@ -122,34 +122,35 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Accept => {
                 // TODO: make a filtered channel where all protocol messages which indicate a
                 // received chat message are handeled seperately
-                let (s1, r1) = channel::unbounded();
-                let (s2, r2) = channel::unbounded();
-                let stream = to_protocolpackage_stream(self.server_socket.clone());
-                let mut stream = Box::pin(stream);
-                let _ = smol::spawn(async move {
-                    tracing::debug!("FUCKING YEET");
-                    while !s1.is_closed() {
-                        let package = stream.next().await;
-                        if package.is_none() {
-                            break;
-                        }
-                        let package = package.unwrap();
-                        if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
-                            s2.send(new_package).await.unwrap();
-                        } else {
-                            s1.send(package).await.unwrap();
-                        }
-                    }
-                    s1.close();
-                    s2.close();
-                });
-
-                let _ = smol::spawn(async move {
-                    while !r2.is_closed() {
-                        let package = r2.recv().await;
-                        tracing::debug!("RECEIVED MESSAGE: {:?}", package);
-                    }
-                });
+                let (s1, r1) = mpsc::unbounded_channel();
+                // let (s2, r2) = mpsc::unbounded_channel();
+                // TODO:
+                // let stream = to_protocolpackage_stream(self.server_socket.clone());
+                // let mut stream = Box::pin(stream);
+                // let _ = smol::spawn(async move {
+                //     tracing::debug!("FUCKING YEET");
+                //     while !s1.is_closed() {
+                //         let package = stream.next().await;
+                //         if package.is_none() {
+                //             break;
+                //         }
+                //         let package = package.unwrap();
+                //         if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
+                //             s2.send(new_package).await.unwrap();
+                //         } else {
+                //             s1.send(package).await.unwrap();
+                //         }
+                //     }
+                //     s1.close();
+                //     s2.close();
+                // });
+                //
+                // let _ = smol::spawn(async move {
+                //     while !r2.is_closed() {
+                //         let package = r2.recv().await;
+                //         tracing::debug!("RECEIVED MESSAGE: {:?}", package);
+                //     }
+                // });
                 // let filtered_stream = stream.lef
                 let new_state = ServerChannelConnected {
                     connection: self.server_socket,
@@ -237,7 +238,7 @@ impl<T:HasServerConnection + Send, D: From<NotConnected> + Send> Disconnect<D> f
         let message = ProtocolPackage::DisconnectNotification;
         match self.get_server_socket().send_package(message).await {
             Ok(_) => {
-                match self.get_server_socket().close().await {
+                match self.get_server_socket().shutdown().await {
                     Ok(_) => Some((NotConnected.into(), Reaction::Success)),
                     Err(error) => Some((NotConnected.into(), Reaction::IoError(error)))
                 }

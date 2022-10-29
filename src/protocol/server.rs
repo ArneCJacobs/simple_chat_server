@@ -1,22 +1,22 @@
-use std::{sync::Arc, fmt::Debug, time::Duration};
+use std::{sync::Arc, fmt::Debug};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
-use smol::{net::TcpStream, lock::Mutex, io::AsyncWriteExt, Timer};
-use crate::{broker::{Broker, BrokerError}, impl_send_receive};
+use tokio::io::AsyncWriteExt;
+use crate::{TcpStream, Mutex ,broker::{Broker, BrokerError}, impl_send_receive};
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 // ### STATES ###
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientConnection{ 
     pub socket: TcpStream 
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientConnectionAuthenticated{ 
     broker: Arc<Mutex<Broker>>,
     socket: TcpStream, 
     username: String 
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClientChannelConnection{ 
     broker: Arc<Mutex<Broker>>,
     socket: TcpStream, 
@@ -87,7 +87,7 @@ impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConn
             _ => return Some((self.into(), Reaction::MalformedPackage)),
         };
 
-        let mut guard = shared.broker.lock_arc().await;               
+        let mut guard = shared.broker.lock().await;               
         let res = guard.register_username(username.clone());
         std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
         if let Err(error) = res {
@@ -150,7 +150,7 @@ impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthentica
 impl ClientConnectionAuthenticated {
     async fn list_channels(mut self, shared: &mut SharedContext) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)>
     {
-        let guard = shared.broker.lock_arc().await;
+        let guard = shared.broker.lock().await;
         let channels = guard.get_channels();
         std::mem::drop(guard);
         let message = ProtocolPackage::InfoListChannelsReply{ channels };
@@ -163,7 +163,7 @@ impl ClientConnectionAuthenticated {
     // TODO: join channel notification
     async fn join_channel(mut self, shared: &mut SharedContext, channel: String) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> 
     {
-        let mut guard = shared.broker.lock_arc().await;
+        let mut guard = shared.broker.lock().await;
         let res = guard.subscribe(channel.clone(), self.socket.clone());
         if let Err(error) = res {
             let message = ProtocolPackage::Deny{ error: error.clone() };
@@ -191,9 +191,9 @@ impl ClientConnectionAuthenticated {
     }
 
     pub async fn shutdown(mut self) {
-        self.socket.close().await.ok(); // Don't care if successful or not, either way the channel
+        self.socket.shutdown().await.ok();  // Don't care if successful or not, either way the channel
         // will be disconnected
-        let mut guard = self.broker.lock_arc().await;
+        let mut guard = self.broker.lock().await;
         guard.deregister_username(&self.username);
     }
 }
@@ -241,7 +241,7 @@ impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdge
 impl ClientChannelConnection {
     async fn send_message(mut self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
         let message = ProtocolPackage::ChatMessageReceive { username: self.username.clone(), message };
-        let mut guard = shared.broker.lock_arc().await;
+        let mut guard = shared.broker.lock().await;
 
         with_context!(guard.notify(&self.channel, message).await, self);
 
@@ -251,9 +251,9 @@ impl ClientChannelConnection {
     } 
 
     pub async fn shutdown(mut self, intentional: bool) {
-        self.socket.close().await.ok(); // Don't care if successful or not, either way the channel
+        self.socket.shutdown().await.ok(); // Don't care if successful or not, either way the channel
         // will be disconnected
-        let mut guard = self.broker.lock_arc().await;
+        let mut guard = self.broker.lock().await;
         guard.unsubscribe(&self.channel, &self.socket);
         guard.deregister_username(&self.username);
 
@@ -280,7 +280,7 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
         match input {
             ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
             ProtocolPackage::ChannelDisconnectNotification => {
-                let mut guard = shared.broker.lock_arc().await;
+                let mut guard = shared.broker.lock().await;
                 guard.unsubscribe(&self.channel, &self.socket);
                 std::mem::drop(guard);
                 let new_state = ClientConnectionAuthenticated {

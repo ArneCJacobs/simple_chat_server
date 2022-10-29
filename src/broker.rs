@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use futures::{AsyncWriteExt, future::join_all};
-use smol::net::TcpStream;
+use futures::future::join_all;
 use serde::{Serialize, Deserialize};
+use crate::TcpStream;
 
 use crate::protocol::{ProtocolPackage, HasServerConnection};
 
@@ -13,6 +13,9 @@ pub struct Broker {
     backwards: HashMap<TcpStreamKeyString, String>,
     usernames: HashSet<String>,
 }
+
+// TODO: see specifics for send
+unsafe impl Send for Broker {}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BrokerError {
