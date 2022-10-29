@@ -85,6 +85,7 @@ impl ChatServer {
         let peer_addr = stream.peer_addr();
         tracing::info!("NEW CONNECTION: {:?}", peer_addr);
         let shared = SharedContext { broker: broker.clone() };
+        let stream = Arc::new(Mutex::new(stream));
         let start_state = ClientConnection{ socket: stream };
         let mut server_side_sm: StateMachineAsync<ServerSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
         let mut result = None;

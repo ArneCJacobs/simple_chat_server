@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use futures::future::join_all;
 use serde::{Serialize, Deserialize};
-use crate::TcpStream;
 
-use crate::protocol::{ProtocolPackage, HasServerConnection};
+use crate::protocol::{ProtocolPackage, HasServerConnection, Connection};
 
 type TcpStreamKeyString = String;
 
 #[derive(Debug)]
 pub struct Broker { 
-    channels: HashMap<String, Vec<TcpStream>>,
+    channels: HashMap<String, Vec<Connection>>,
     backwards: HashMap<TcpStreamKeyString, String>,
     usernames: HashSet<String>,
 }
@@ -39,12 +39,13 @@ impl Broker {
             .collect()
     }
 
-    fn get_key(listener: &TcpStream) -> String {
-        format!("{:?}", listener.peer_addr())
+    #[inline]
+    fn get_key(listener: &std::io::Result<SocketAddr>) -> String {
+        format!("{:?}", listener)
     }
 
-    pub fn subscribe(&mut self, channel: String, listener: TcpStream) ->  Result<(), BrokerError>{
-        let key_string = Broker::get_key(&listener);
+    pub async fn subscribe(&mut self, channel: String, listener: Connection) ->  Result<(), BrokerError>{
+        let key_string = Broker::get_key(&listener.lock().await.peer_addr());
         let res = self.backwards.get(&key_string);
         if let Some(current_channel) = res {
             return Err(BrokerError::AlreadySubscribed{ channel: current_channel.clone() });
@@ -62,16 +63,22 @@ impl Broker {
 
     // TODO: if channel is empty, remove channel
     // TODO: send message to the channel that the user has left
-    pub fn unsubscribe(&mut self, channel: &String, listener: &TcpStream) {
-        let key_string = Broker::get_key(listener);
+    pub async fn unsubscribe(&mut self, channel: &String, listener: &Connection) {
+        let key_string = Broker::get_key(&listener.lock().await.peer_addr());
         if !self.backwards.contains_key(&key_string){
             return;
         }
         self.backwards.remove(&key_string);
         let listeners = self.channels.get_mut(channel).unwrap();
-        let index = listeners.iter()
-            .position(|x| Broker::get_key(x) == key_string).unwrap();
-        listeners.remove(index);
+        // let index = listeners.iter()
+        //     .position(|x| Broker::get_key(&x.lock().await.peer_addr()) == key_string).unwrap();
+        for (index, x) in listeners.iter().enumerate() {
+            let key = Broker::get_key(&x.lock().await.peer_addr());
+            if key == key_string {
+                listeners.remove(index);
+                break;
+            }
+        }
     }
 
     pub async fn notify(&mut self, channel: &String, message: ProtocolPackage) -> Result<(), Box<bincode::ErrorKind>> {

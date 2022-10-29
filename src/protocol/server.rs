@@ -1,25 +1,26 @@
+use crate::protocol::HasServerConnection;
 use std::{sync::Arc, fmt::Debug};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
 use tokio::io::AsyncWriteExt;
-use crate::{TcpStream, Mutex ,broker::{Broker, BrokerError}, impl_send_receive};
-use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
+use crate::{TcpStream, Mutex, broker::{Broker, BrokerError}, impl_send_receive};
+use super::{ProtocolPackage, SendReceiveError};
 
 // ### STATES ###
 #[derive(Debug)]
 pub struct ClientConnection{ 
-    pub socket: TcpStream 
+    pub socket: Arc<Mutex<TcpStream>>,
 }
 #[derive(Debug)]
 pub struct ClientConnectionAuthenticated{ 
     broker: Arc<Mutex<Broker>>,
-    socket: TcpStream, 
+    socket: Arc<Mutex<TcpStream>>,
     username: String 
 }
 #[derive(Debug)]
 pub struct ClientChannelConnection{ 
     broker: Arc<Mutex<Broker>>,
-    socket: TcpStream, 
+    socket: Arc<Mutex<TcpStream>>,
     username: String, 
     channel: String 
 }
@@ -92,6 +93,7 @@ impl AsyncProgress<ClientConnectionEdges, ServerSideConnectionSM> for ClientConn
         std::mem::drop(guard); // not strictly needed but the faster the mutex guard is dropped the better 
         if let Err(error) = res {
             let message = ProtocolPackage::Deny{ error: error.clone() };
+            // with_context!(self.socket.send(message), self);
             with_context!(self.socket.send_package(message).await, self);
             with_context!(Err(error), self)
         } else {
@@ -164,7 +166,7 @@ impl ClientConnectionAuthenticated {
     async fn join_channel(mut self, shared: &mut SharedContext, channel: String) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> 
     {
         let mut guard = shared.broker.lock().await;
-        let res = guard.subscribe(channel.clone(), self.socket.clone());
+        let res = guard.subscribe(channel.clone(), self.socket.clone()).await;
         if let Err(error) = res {
             let message = ProtocolPackage::Deny{ error: error.clone() };
             async_with_context!(self.socket.send_package(message).await, self);
@@ -173,10 +175,10 @@ impl ClientConnectionAuthenticated {
         let message = ProtocolPackage::Accept;
         async_with_context!(self.socket.send_package(message).await, self);
 
-        let message = ProtocolPackage::ChatMessageReceive { 
-            username: "CHANNEL".to_string(), 
-            message: format!("{} JOINED CHANNEL", self.username) 
-        };
+        // let message = ProtocolPackage::ChatMessageReceive { 
+        //     username: "CHANNEL".to_string(), 
+        //     message: format!("{} JOINED CHANNEL", self.username) 
+        // };
         // TODO: all notify calls mess up client
         // with_context!(guard.notify(&channel, message).await, self);
         std::mem::drop(guard);
@@ -190,8 +192,8 @@ impl ClientConnectionAuthenticated {
         Some((new_state.into(), Reaction::Success))
     }
 
-    pub async fn shutdown(mut self) {
-        self.socket.shutdown().await.ok();  // Don't care if successful or not, either way the channel
+    pub async fn shutdown(self) {
+        self.socket.lock_owned().await.shutdown().await.ok();  // Don't care if successful or not, either way the channel
         // will be disconnected
         let mut guard = self.broker.lock().await;
         guard.deregister_username(&self.username);
@@ -250,12 +252,14 @@ impl ClientChannelConnection {
         Some((self.into(), Reaction::Success))
     } 
 
-    pub async fn shutdown(mut self, intentional: bool) {
-        self.socket.shutdown().await.ok(); // Don't care if successful or not, either way the channel
-        // will be disconnected
+    pub async fn shutdown(self, intentional: bool) {
         let mut guard = self.broker.lock().await;
-        guard.unsubscribe(&self.channel, &self.socket);
+        guard.unsubscribe(&self.channel, &self.socket).await;
         guard.deregister_username(&self.username);
+
+
+        self.socket.lock_owned().await.shutdown().await.ok(); // Don't care if successful or not, either way the channel
+        // will be disconnected
 
         let message_text = if intentional {
             format!("{} DISCONNECTED", self.username)
@@ -281,7 +285,7 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
             ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
             ProtocolPackage::ChannelDisconnectNotification => {
                 let mut guard = shared.broker.lock().await;
-                guard.unsubscribe(&self.channel, &self.socket);
+                guard.unsubscribe(&self.channel, &self.socket).await;
                 std::mem::drop(guard);
                 let new_state = ClientConnectionAuthenticated {
                     username: self.username,

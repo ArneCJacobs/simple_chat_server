@@ -1,10 +1,13 @@
+use std::sync::Arc;
+
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::{UnboundedReceiver, self};
+use tokio::sync::Mutex;
 use crate::{broker::BrokerError, impl_send_receive};
 
 use crate::TcpStream;
 
+use super::Connection;
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
@@ -12,12 +15,16 @@ use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 #[derive(Clone, Debug)]
 pub struct NotConnected;
 #[derive(Debug)]
-pub struct ServerConnected { server_socket: TcpStream }
+pub struct ServerConnected { server_socket: Connection }
 #[derive(Debug)]
-pub struct ServerConnectedAuthenticated { server_socket: TcpStream, username: String }
+pub struct ServerConnectedAuthenticated { 
+    server_socket: Connection, 
+    username: String 
+}
+
+#[allow(dead_code)]
 pub struct ServerChannelConnected { 
-    connection: TcpStream,
-    packages: UnboundedReceiver<Result<ProtocolPackage, SendReceiveError>>,
+    server_socket: Connection,
     channel: String,
     username: String,
 }
@@ -38,6 +45,7 @@ pub enum Input {
 
 #[derive(Debug)]
 pub enum Reaction {
+    LostConnection,
     IoError(std::io::Error),
     BinError(Box<bincode::ErrorKind>),
     MalformedPackage,
@@ -85,6 +93,7 @@ impl AsyncProgress<NotConnectedEdges, ClientSideConnectionSM> for NotConnected {
         };
 
         let server_connection = with_context!(TcpStream::connect(server_addres).await, self);
+        let server_connection = Arc::new(Mutex::new(server_connection));
         let new_state = ServerConnected { server_socket: server_connection };
         Some((new_state.into(), Reaction::Success))
     } 
@@ -99,11 +108,15 @@ impl AsyncProgress<ServerConnectedEdges, ClientSideConnectionSM> for ServerConne
             _ => return Some((self.into(), Reaction::InvalidCommand)),
         };
         let message = ProtocolPackage::ServerAuthenticationRequest{ username: new_username.clone() };
+        // with_context!(self.)
         let response = with_context!(self.server_socket.send_package_and_receive(message).await, self);
 
         match response {
             ProtocolPackage::Accept => {
-                let new_state = ServerConnectedAuthenticated { server_socket: self.server_socket, username: new_username };
+                let new_state = ServerConnectedAuthenticated { 
+                    server_socket: self.server_socket, 
+                    username: new_username 
+                };
                 Some((new_state.into(), Reaction::Success))
             },
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
@@ -122,7 +135,7 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Accept => {
                 // TODO: make a filtered channel where all protocol messages which indicate a
                 // received chat message are handeled seperately
-                let (s1, r1) = mpsc::unbounded_channel();
+                // let (s1, r1) = mpsc::unbounded_channel();
                 // let (s2, r2) = mpsc::unbounded_channel();
                 // TODO:
                 // let stream = to_protocolpackage_stream(self.server_socket.clone());
@@ -153,8 +166,8 @@ impl ServerConnectedAuthenticated {
                 // });
                 // let filtered_stream = stream.lef
                 let new_state = ServerChannelConnected {
-                    connection: self.server_socket,
-                    packages: r1,
+                    server_socket: self.server_socket,
+                    // packages: r1,
                     username: self.username,
                     channel,
                 };
@@ -193,10 +206,7 @@ impl ServerChannelConnected {
     async fn send_message(mut self, message: String) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
         let message = ProtocolPackage::ChatMessageSend { message };
-        with_context!(self.connection.send_package(message).await, self);
-
-        // TODO: no unwrap here
-        let reply = with_context!(self.packages.recv().await.unwrap(), self); 
+        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self); 
         match reply {
             ProtocolPackage::Accept => Some((self.into(), Reaction::Success)),
             // ProtocolPackage::Deny { error } => Some((self.into(), error.into())),
@@ -207,15 +217,11 @@ impl ServerChannelConnected {
     async fn disconnect_channel(mut self) -> Option<(ServerChannelConnectedEdges, Reaction)>
     {
         let message = ProtocolPackage::ChannelDisconnectNotification;
-        with_context!(self.connection.send_package(message).await, self);
-
-        // TODO: no unwrap here
-        let reply = with_context!(self.packages.recv().await.unwrap(), self); 
+        let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self); 
         match reply {
             ProtocolPackage::Accept => {
-                self.packages.close();
                 let new_state = ServerConnectedAuthenticated {
-                    server_socket: self.connection,
+                    server_socket: self.server_socket,
                     username: self.username,
                 };
                 Some((new_state.into(), Reaction::Success)) 
@@ -233,12 +239,13 @@ trait Disconnect<T: Send> {
 } 
 
 #[::rust_state_machine::async_trait::async_trait]
-impl<T:HasServerConnection + Send, D: From<NotConnected> + Send> Disconnect<D> for T {
+impl<D: From<NotConnected> + Send> Disconnect<D> for Arc<Mutex<TcpStream>> 
+{
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
-        match self.get_server_socket().send_package(message).await {
+        match self.send_package(message).await {
             Ok(_) => {
-                match self.get_server_socket().shutdown().await {
+                match self.lock().await.shutdown().await {
                     Ok(_) => Some((NotConnected.into(), Reaction::Success)),
                     Err(error) => Some((NotConnected.into(), Reaction::IoError(error)))
                 }
@@ -255,8 +262,7 @@ impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for Serv
             Input::SendMessage(message) => self.send_message(message).await,
             Input::DisconnectChannel => self.disconnect_channel().await,
             Input::Disconnect => {
-                self.packages.close();
-                self.connection.disconnect().await
+                self.server_socket.disconnect().await
             },
             _ => Some((self.into(), Reaction::InvalidCommand))
         }
