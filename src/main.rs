@@ -44,7 +44,8 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
             Input::Authenticate("Steam".to_string()),
             Input::GetChannelsList,
             Input::ConnectChannel("Welcome".to_string()),
-            // Input::SendMessage("Hello Chat".to_string()),
+            Input::SendMessage("Hello Chat".to_string()),
+            // Input::SendMessage("I am new here".to_string()),
             Input::Disconnect,
         ];
 
@@ -54,7 +55,7 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
             tracing::info!("RESPONSE: {:?}", output);
         }
         // start_client(ADDR.to_string())?;
-        tracing::debug!("DONE");
+        tracing::info!("DONE");
     }
     Ok(())
 }
@@ -93,7 +94,7 @@ impl ChatServer {
         let mut result = None;
         loop {
             let res = server_side_sm.transition(()).await;
-            tracing::debug!("RESPONSE: {:?}", res);
+            tracing::info!("RESPONSE: {:?}", res);
             if res.is_none() {
                 break;
             } else {

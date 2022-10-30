@@ -1,4 +1,4 @@
-use tokio::{io::{AsyncWriteExt, AsyncReadExt}, sync::{Mutex, mpsc::UnboundedReceiver}};
+use tokio::{io::{AsyncWriteExt, AsyncReadExt}, sync::{Mutex, mpsc::Receiver}};
 use crate::TcpStream;
 use std::{fmt::Debug, result::Result as StdResult, sync::Arc};
 
@@ -66,18 +66,16 @@ impl HasServerConnection for TcpStream
     }
 
     async fn receive_package(&mut self) -> StdResult<ProtocolPackage, SendReceiveError> {
-        // tracing::debug!(target = "package_transfer","RECEIVING PACKAGE");
-        let mut length_buffer = [0; 8];
-        self.read_exact(&mut length_buffer).await?;
-        let len: u64 = u64::from_le_bytes(length_buffer);
-        // tracing::debug!(target = "package_transfer","DATA HAS LENGTH: {:?}", len);
+        tracing::debug!("== RECEIVING PACKAGE == ");
+        let len: u64 = self.read_u64_le().await?;
+        tracing::debug!("DATA HAS LENGTH: {:?}", len);
         if len > 1000 {
             panic!("The received message has supposed length {}, which is larger then the maximum allowed length", len);
         }
         let mut buffer: Vec<u8> = vec![0; len.try_into().unwrap()];
         self.read_exact(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
-        tracing::debug!("RECEIVED PACKAGE {:?}", received_message);
+        tracing::debug!("== RECEIVED PACKAGE {:?} ==", received_message);
         Ok(received_message)
     }
 
@@ -121,7 +119,7 @@ impl HasServerConnection for Connection {
 }
 pub struct FilteredTcpStream {
     socket: Connection,
-    receiver: UnboundedReceiver<Result<ProtocolPackage, SendReceiveError>>
+    receiver: Receiver<Result<ProtocolPackage, SendReceiveError>>
 }
 #[async_trait]
 impl HasServerConnection for FilteredTcpStream {

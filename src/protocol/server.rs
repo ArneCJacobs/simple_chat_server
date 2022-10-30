@@ -162,7 +162,6 @@ impl ClientConnectionAuthenticated {
         Some((self.into(), Reaction::Success))
     }
 
-    // TODO: join channel notification
     async fn join_channel(mut self, shared: &mut SharedContext, channel: String) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> 
     {
         let mut guard = shared.broker.lock().await;
@@ -179,7 +178,6 @@ impl ClientConnectionAuthenticated {
             username: "CHANNEL".to_string(), 
             message: format!("{} JOINED CHANNEL", self.username) 
         };
-        // TODO: all notify calls mess up client
         with_context!(guard.notify(&channel, message).await, self);
         std::mem::drop(guard);
 
@@ -246,6 +244,7 @@ impl ClientChannelConnection {
         let mut guard = shared.broker.lock().await;
 
         with_context!(guard.notify(&self.channel, message).await, self);
+        std::mem::drop(guard);
 
         let message = ProtocolPackage::Accept;
         async_with_context!(self.socket.send_package(message).await, self);
@@ -274,6 +273,7 @@ impl ClientChannelConnection {
         guard.notify(&self.channel, message).await
             .expect("Could not serialize message");
 
+        std::mem::drop(guard);
     }
 }
 

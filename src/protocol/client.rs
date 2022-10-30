@@ -133,34 +133,41 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
-                // TODO: make a filtered channel where all protocol messages which indicate a
-                // received chat message are handeled seperately
-                let (s1, r1) = mpsc::unbounded_channel();
-                let (s2, mut r2) = mpsc::unbounded_channel();
+                let (s1, r1) = mpsc::channel(1);
+                // let (s2, mut r2) = mpsc::channel(1);
                 let mut socket_copy = self.server_socket.clone();
                 // TODO:
                 tokio::spawn(async move {
-                    while !s1.is_closed() && !s2.is_closed() {
-                        let package = socket_copy.receive_package().await;
+                    loop {
+                        // tracing::debug!("1 IN FILTER THREAD");
+                        let package = tokio::select! {
+                            res = socket_copy.receive_package() => res,
+                            _ = s1.closed() => break
+                        };
+                        // tracing::debug!("X IN FILTER THREAD");
 
-                        if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
-                            if s2.send(new_package).is_err() {
+                        if let Ok(_new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
+                            // tracing::debug!("2 IN FILTER THREAD");
+                            // if s2.send(new_package).await.is_err() {
+                                // break;
+                            // }
+                        } else {
+                            // tracing::debug!("3 IN FILTER THREAD");
+                            if s1.send(package).await.is_err() {
                                 break;
                             }
-                        } else if s1.send(package).is_err() {
-                            break;
                         }
                     }
 
                     std::mem::drop(s1);
-                    std::mem::drop(s2);
+                    // std::mem::drop(s2);
                 });
-                //
-                tokio::spawn(async move {
-                    while let Some(package) = r2.recv().await {
-                        tracing::info!("RECEIVED MESSAGE: {:?}", package);
-                    }
-                });
+                
+                // tokio::spawn(async move {
+                //     while let Some(package) = r2.recv().await {
+                //         tracing::info!("RECEIVED MESSAGE: {:?}", package);
+                //     }
+                // });
 
                 let filtered_tcp_stream = FilteredTcpStream {
                     socket: self.server_socket,
@@ -184,8 +191,7 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::InfoListChannelsReply{ channels } => Some((self.into(), Reaction::ChannelList(channels))),
-            _ => Some((self.into(), Reaction::MalformedPackage)), // TODO: send malformed package
-            // notification back
+            _ => Some((self.into(), Reaction::MalformedPackage)), // TODO: send malformed package notification back
         }
     }
 }
@@ -243,9 +249,12 @@ impl<D: From<NotConnected> + Send> Disconnect<D> for Connection
 {
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
+        tracing::warn!("DISCONNECTING AND ALL THAT");  
+        
+        tracing::warn!("MUTEX IS TAKEN: {:?}", self.try_lock());
         match self.send_package(message).await {
             Ok(_) => {
-                match self.lock().await.shutdown().await {
+                match self.lock_owned().await.shutdown().await {
                     Ok(_) => Some((NotConnected.into(), Reaction::Success)),
                     Err(error) => Some((NotConnected.into(), Reaction::IoError(error)))
                 }
@@ -258,7 +267,7 @@ impl<D: From<NotConnected> + Send> Disconnect<D> for Connection
 #[::rust_state_machine::async_trait::async_trait]
 impl<D: From<NotConnected> + Send> Disconnect<D> for FilteredTcpStream {
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
-        self.socket.disconnect().await
+        self.get_unfiltered().disconnect().await
     }
 } 
 
