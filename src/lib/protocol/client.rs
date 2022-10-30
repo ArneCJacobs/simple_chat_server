@@ -1,15 +1,15 @@
-use std::sync::Arc;
+use std::str::FromStr;
 
-use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context, AsyncToStatesAndOutput, async_with_context};
+use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedReadHalf;
-use tokio::sync::{Mutex, mpsc};
-use tokio::task::{JoinHandle, JoinError};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use crate::{broker::BrokerError, impl_send_receive};
 
 use super::TcpStream;
 
-use super::{Connection, FilteredTcpStream};
+use super::FilteredTcpStream;
 use super::{HasServerConnection ,ProtocolPackageSender, ProtocolPackageReader, ProtocolPackage, SendReceiveError};
 
 
@@ -46,6 +46,36 @@ pub enum Input {
     SendMessage(String),
     DisconnectChannel,
     Disconnect,
+}
+
+#[derive(Debug)]
+pub enum InputParseError {
+    MissingArgument,
+    UnknownCommand
+}
+
+impl FromStr for Input {
+    type Err = InputParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let split: Vec<_> = s.split(':').collect();
+        let second = split
+            .get(1)
+            .map(|s| s.trim().to_string())
+            .ok_or(InputParseError::MissingArgument);
+
+        use Input::*;
+
+        match split[0] {
+            "ConnectServer" | "cs" => Ok(ConnectServer(second?)),
+            "Authenticate" | "a" => Ok(Authenticate(second?)),
+            "GetChannelsList" | "lsc" => Ok(GetChannelsList),
+            "ConnectChannel" | "cc" => Ok(ConnectChannel(second?)),
+            "SendMessage" | "s" | "sm" => Ok(SendMessage(second?)),
+            "DisconnectChannel" | "dc" => Ok(DisconnectChannel),
+            "Disconnect" | "d" => Ok(Disconnect),
+            _ => Err(InputParseError::UnknownCommand),
+        }
+    }
 }
 
 #[derive(Debug)]

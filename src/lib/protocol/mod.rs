@@ -120,6 +120,7 @@ impl_protocol_package_reader!(TcpStream, OwnedReadHalf);
 
 impl HasServerConnection for TcpStream {}
 
+// TODO: make a handler for a TCP stream see: https://tokio.rs/tokio/tutorial/shared-state#spawn-a-task-to-manage-the-state-and-use-message-passing-to-operate-on-it
 pub type Connection = Arc<Mutex<TcpStream>>;
 
 #[async_trait]

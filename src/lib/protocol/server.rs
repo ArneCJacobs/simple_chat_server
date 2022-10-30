@@ -248,10 +248,15 @@ impl AsyncToStatesAndOutput<ClientChannelConnection, ClientChannelConnectionEdge
 impl ClientChannelConnection {
     async fn send_message(mut self, shared: &mut SharedContext, message: String) -> Option<(ClientChannelConnectionEdges, Reaction)> {
         let message = ProtocolPackage::ChatMessageReceive { username: self.username.clone(), message };
-        let mut guard = shared.broker.lock().await;
+        let broker = shared.broker.clone();
+        let channel = self.channel.clone();
 
-        with_context!(guard.notify(&self.channel, message).await, self);
-        std::mem::drop(guard);
+        tokio::spawn(async move {
+            let mut guard = broker.lock().await;
+            guard.notify(&channel, message).await.unwrap();
+            std::mem::drop(guard);
+            std::mem::drop(broker);
+        });
 
         let message = ProtocolPackage::Accept;
         async_with_context!(self.socket.send_package(message).await, self);
