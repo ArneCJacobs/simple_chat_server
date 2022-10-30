@@ -61,8 +61,6 @@ impl Broker {
         Ok(())
     }
 
-    // TODO: if channel is empty, remove channel
-    // TODO: send message to the channel that the user has left
     pub async fn unsubscribe(&mut self, channel: &String, listener: &Connection, username: &String) {
         let key_string = Broker::get_key(&listener.lock().await.peer_addr());
         if !self.backwards.contains_key(&key_string){

@@ -134,28 +134,22 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
                 let (s1, r1) = mpsc::channel(1);
+                // TODO: replace with a user given sink
                 let (s2, mut r2) = mpsc::channel(1);
                 let mut socket_copy = self.server_socket.clone();
-                // TODO:
                 tokio::spawn(async move {
                     loop {
-                        // tracing::debug!("1 IN FILTER THREAD");
                         let package = tokio::select! {
                             res = socket_copy.receive_package() => res,
                             _ = s1.closed() => break
                         };
-                        // tracing::debug!("X IN FILTER THREAD");
 
                         if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
-                            // tracing::debug!("2 IN FILTER THREAD");
                             if s2.send(new_package).await.is_err() {
                                 break;
                             }
-                        } else {
-                            // tracing::debug!("3 IN FILTER THREAD");
-                            if s1.send(package).await.is_err() {
-                                break;
-                            }
+                        } else if s1.send(package).await.is_err() {
+                            break;
                         }
                     }
 

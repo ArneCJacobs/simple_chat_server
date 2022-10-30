@@ -45,7 +45,7 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
             Input::GetChannelsList,
             Input::ConnectChannel("Welcome".to_string()),
             Input::SendMessage("Hello Chat".to_string()),
-            // Input::SendMessage("I am new here".to_string()),
+            Input::SendMessage("I am new here".to_string()),
             Input::Disconnect,
         ];
 
@@ -54,7 +54,6 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
             let output = client.transition(command.clone()).await;
             tracing::info!("RESPONSE: {:?}", output);
         }
-        // start_client(ADDR.to_string())?;
         tracing::info!("DONE");
     }
     Ok(())
