@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use crate::{broker::BrokerError, impl_send_receive};
 
 use crate::TcpStream;
 
-use super::Connection;
+use super::{Connection, FilteredTcpStream};
 use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
 
 
@@ -24,7 +24,7 @@ pub struct ServerConnectedAuthenticated {
 
 #[allow(dead_code)]
 pub struct ServerChannelConnected { 
-    server_socket: Connection,
+    server_socket: FilteredTcpStream,
     channel: String,
     username: String,
 }
@@ -135,39 +135,39 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Accept => {
                 // TODO: make a filtered channel where all protocol messages which indicate a
                 // received chat message are handeled seperately
-                // let (s1, r1) = mpsc::unbounded_channel();
-                // let (s2, r2) = mpsc::unbounded_channel();
+                let (s1, r1) = mpsc::unbounded_channel();
+                let (s2, mut r2) = mpsc::unbounded_channel();
+                let mut socket_copy = self.server_socket.clone();
                 // TODO:
-                // let stream = to_protocolpackage_stream(self.server_socket.clone());
-                // let mut stream = Box::pin(stream);
-                // let _ = smol::spawn(async move {
-                //     tracing::debug!("FUCKING YEET");
-                //     while !s1.is_closed() {
-                //         let package = stream.next().await;
-                //         if package.is_none() {
-                //             break;
-                //         }
-                //         let package = package.unwrap();
-                //         if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
-                //             s2.send(new_package).await.unwrap();
-                //         } else {
-                //             s1.send(package).await.unwrap();
-                //         }
-                //     }
-                //     s1.close();
-                //     s2.close();
-                // });
+                tokio::spawn(async move {
+                    while !s1.is_closed() && !s2.is_closed() {
+                        let package = socket_copy.receive_package().await;
+
+                        if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
+                            if s2.send(new_package).is_err() {
+                                break;
+                            }
+                        } else if s1.send(package).is_err() {
+                            break;
+                        }
+                    }
+
+                    std::mem::drop(s1);
+                    std::mem::drop(s2);
+                });
                 //
-                // let _ = smol::spawn(async move {
-                //     while !r2.is_closed() {
-                //         let package = r2.recv().await;
-                //         tracing::debug!("RECEIVED MESSAGE: {:?}", package);
-                //     }
-                // });
-                // let filtered_stream = stream.lef
+                tokio::spawn(async move {
+                    while let Some(package) = r2.recv().await {
+                        tracing::info!("RECEIVED MESSAGE: {:?}", package);
+                    }
+                });
+
+                let filtered_tcp_stream = FilteredTcpStream {
+                    socket: self.server_socket,
+                    receiver: r1,
+                };
                 let new_state = ServerChannelConnected {
-                    server_socket: self.server_socket,
-                    // packages: r1,
+                    server_socket: filtered_tcp_stream,
                     username: self.username,
                     channel,
                 };
@@ -221,7 +221,7 @@ impl ServerChannelConnected {
         match reply {
             ProtocolPackage::Accept => {
                 let new_state = ServerConnectedAuthenticated {
-                    server_socket: self.server_socket,
+                    server_socket: self.server_socket.get_unfiltered(),
                     username: self.username,
                 };
                 Some((new_state.into(), Reaction::Success)) 
@@ -239,7 +239,7 @@ trait Disconnect<T: Send> {
 } 
 
 #[::rust_state_machine::async_trait::async_trait]
-impl<D: From<NotConnected> + Send> Disconnect<D> for Arc<Mutex<TcpStream>> 
+impl<D: From<NotConnected> + Send> Disconnect<D> for Connection 
 {
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
@@ -254,6 +254,13 @@ impl<D: From<NotConnected> + Send> Disconnect<D> for Arc<Mutex<TcpStream>>
         }
     }
 }
+
+#[::rust_state_machine::async_trait::async_trait]
+impl<D: From<NotConnected> + Send> Disconnect<D> for FilteredTcpStream {
+    async fn disconnect(mut self) -> Option<(D, Reaction)> {
+        self.socket.disconnect().await
+    }
+} 
 
 #[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for ServerChannelConnected {

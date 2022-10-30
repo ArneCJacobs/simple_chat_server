@@ -1,4 +1,4 @@
-use tokio::{io::{AsyncWriteExt, AsyncReadExt}, sync::Mutex};
+use tokio::{io::{AsyncWriteExt, AsyncReadExt}, sync::{Mutex, mpsc::UnboundedReceiver}};
 use crate::TcpStream;
 use std::{fmt::Debug, result::Result as StdResult, sync::Arc};
 
@@ -9,7 +9,6 @@ use crate::broker::BrokerError;
 
 pub mod client;
 pub mod server;
-pub mod protocol_package_stream;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ProtocolPackage {
@@ -67,23 +66,23 @@ impl HasServerConnection for TcpStream
     }
 
     async fn receive_package(&mut self) -> StdResult<ProtocolPackage, SendReceiveError> {
-        tracing::debug!(target = "package_transfer","RECEIVING PACKAGE");
+        // tracing::debug!(target = "package_transfer","RECEIVING PACKAGE");
         let mut length_buffer = [0; 8];
         self.read_exact(&mut length_buffer).await?;
         let len: u64 = u64::from_le_bytes(length_buffer);
-        tracing::debug!(target = "package_transfer","DATA HAS LENGTH: {:?}", len);
+        // tracing::debug!(target = "package_transfer","DATA HAS LENGTH: {:?}", len);
         if len > 1000 {
             panic!("The received message has supposed length {}, which is larger then the maximum allowed length", len);
         }
         let mut buffer: Vec<u8> = vec![0; len.try_into().unwrap()];
         self.read_exact(&mut buffer).await?;
         let received_message: ProtocolPackage = bincode::deserialize(&buffer[..])?;
-        tracing::debug!(target = "package_transfer","RECEIVED PACKAGE {:?}", received_message);
+        tracing::debug!("RECEIVED PACKAGE {:?}", received_message);
         Ok(received_message)
     }
 
     async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
-        tracing::debug!(target = "package_transfer","SENDING PACKAGE {:?}", message);
+        tracing::debug!("SENDING PACKAGE {:?}", message);
         let serialized = bincode::serialize(&message)?;
         self.send_package_raw(&serialized).await?;
         Ok(())
@@ -118,6 +117,40 @@ impl HasServerConnection for Connection {
     async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
         let mut socket = self.lock().await;
         socket.send_package_raw(serialized).await
+    }
+}
+pub struct FilteredTcpStream {
+    socket: Connection,
+    receiver: UnboundedReceiver<Result<ProtocolPackage, SendReceiveError>>
+}
+#[async_trait]
+impl HasServerConnection for FilteredTcpStream {
+    async fn send_package_and_receive(&mut self, message: ProtocolPackage) -> StdResult<ProtocolPackage, SendReceiveError>
+    {
+        self.send_package(message).await?;
+        self.receive_package().await
+    }
+    async fn receive_package(&mut self) -> StdResult<ProtocolPackage, SendReceiveError> {
+        use std::io;
+        match self.receiver.recv().await {
+            Some(result) => result,
+            None => Err(SendReceiveError::IoError(io::Error::new(io::ErrorKind::NotConnected, "Receiver channel disconnected")))
+        }
+    }
+
+    async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
+        self.socket.send_package(message).await
+    }
+
+    async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
+        self.socket.send_package_raw(serialized).await
+    }
+}
+
+impl FilteredTcpStream {
+    pub fn get_unfiltered(self) -> Connection {
+        std::mem::drop(self.receiver);
+        self.socket
     }
 }
 

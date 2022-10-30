@@ -175,12 +175,12 @@ impl ClientConnectionAuthenticated {
         let message = ProtocolPackage::Accept;
         async_with_context!(self.socket.send_package(message).await, self);
 
-        // let message = ProtocolPackage::ChatMessageReceive { 
-        //     username: "CHANNEL".to_string(), 
-        //     message: format!("{} JOINED CHANNEL", self.username) 
-        // };
+        let message = ProtocolPackage::ChatMessageReceive { 
+            username: "CHANNEL".to_string(), 
+            message: format!("{} JOINED CHANNEL", self.username) 
+        };
         // TODO: all notify calls mess up client
-        // with_context!(guard.notify(&channel, message).await, self);
+        with_context!(guard.notify(&channel, message).await, self);
         std::mem::drop(guard);
 
         let new_state = ClientChannelConnection {

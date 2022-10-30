@@ -12,11 +12,11 @@ else
   then
     # if a widow is already created, re-run commands
     tmux select-pane -t 1 \; respawn-pane -k \; select-pane -t 2 \; respawn-pane -k
-    tmux select-window -t "$LAST"
   else
     # if a window is not created, create setup and run commands
-    tmux set-option -gt $SESSION_NAME remain-on-exit on
-    tmux new-window -n $SESSION_NAME "cargo run listen" \; split-window -t $SESSION_NAME -h "cargo run spreak" \; previous-window
+    tmux new-window -n $SESSION_NAME \; split-window -t $SESSION_NAME -h 
+    tmux set-option -wt $SESSION_NAME remain-on-exit on
+    tmux select-pane -t 1 \; respawn-pane -k 'cargo run listen' \; select-pane -t 2 \; respawn-pane -k 'cargo run speak'
   fi
-
+  tmux select-window -t "$LAST"
 fi
