@@ -173,6 +173,7 @@ impl ClientConnectionAuthenticated {
     {
         let mut guard = shared.broker.lock().await;
         let res = guard.subscribe(channel.clone(), self.socket.clone()).await;
+        drop(guard);
         if let Err(error) = res {
             let message = ProtocolPackage::Deny{ error: error.clone() };
             async_with_context!(self.socket.send_package(message).await, self);
@@ -185,6 +186,7 @@ impl ClientConnectionAuthenticated {
             username: "CHANNEL".to_string(), 
             message: format!("{} JOINED CHANNEL", self.username) 
         };
+        let mut guard = shared.broker.lock().await;
         with_context!(guard.notify(&channel, message).await, self);
         std::mem::drop(guard);
 

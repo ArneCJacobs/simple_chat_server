@@ -87,7 +87,7 @@ impl Broker {
     }
 
     pub async fn notify(&mut self, channel: &String, message: ProtocolPackage) -> Result<(), SendReceiveError> {
-        let serialized = bincode::serialize(&message)?;
+        // let serialized = bincode::serialize(&message)?;
         let listeners = match self.channels.get_mut(channel) {
             Some(listeners) => listeners,
             None => return Err(SendReceiveError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "Channel does not exists")))
@@ -95,10 +95,12 @@ impl Broker {
         // error are intentionally ignored as they need to be handled by SM which actually owns and
         // handles the TcpConnection
         let futures: Vec<_> = listeners.iter_mut()
-            .map(|listener| listener.send_package_raw(&serialized))
+            .map(|listener| listener.send_package(message.clone()))
             .collect();
 
-        join_all(futures).await;
+        for result in join_all(futures).await {
+            result?;
+        }
         Ok(())
     }
 

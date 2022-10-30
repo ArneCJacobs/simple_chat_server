@@ -9,8 +9,9 @@ use crate::broker::BrokerError;
 
 pub mod client;
 pub mod server;
+pub mod util; 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ProtocolPackage {
     ServerAuthenticationRequest{ username: String },
 
@@ -52,7 +53,6 @@ impl From<std::io::Error> for SendReceiveError {
 #[async_trait]
 pub trait ProtocolPackageSender {
     async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError>;
-    async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error>;
 }
 
 #[async_trait]
@@ -76,14 +76,9 @@ macro_rules! impl_protocol_package_sender {
             async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
                 tracing::debug!("SENDING PACKAGE {:?}", message);
                 let serialized = bincode::serialize(&message)?;
-                self.send_package_raw(&serialized).await?;
-                Ok(())
-            }
-
-            async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
                 let len: u64 = serialized.len() as u64;
                 self.write_all(&len.to_le_bytes()).await?;
-                self.write_all(serialized).await?;
+                self.write_all(&serialized).await?;
                 Ok(())
             }
         }
@@ -146,10 +141,6 @@ impl ProtocolPackageSender for Connection {
         let mut socket = self.lock().await;
         socket.send_package(message).await
     }
-    async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
-        let mut socket = self.lock().await;
-        socket.send_package_raw(serialized).await
-    }
 }
 
 pub struct FilteredTcpStream {
@@ -173,10 +164,6 @@ impl ProtocolPackageReader for FilteredTcpStream {
 impl ProtocolPackageSender for FilteredTcpStream {
     async fn send_package(&mut self, message: ProtocolPackage) -> StdResult<(), SendReceiveError> {
         self.socket.send_package(message).await
-    }
-
-    async fn send_package_raw(&mut self, serialized: &[u8]) -> StdResult<(), std::io::Error> {
-        self.socket.send_package_raw(serialized).await
     }
 }
 

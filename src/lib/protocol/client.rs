@@ -167,7 +167,7 @@ impl ServerConnectedAuthenticated {
         match response {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
-                let (s1, r1) = mpsc::channel(1);
+                let (s1, r1) = mpsc::channel(10);
                 // TODO: replace with a user given sink
                 let (s2, mut r2) = mpsc::channel(1);
                 let (mut reader, writer) = self.server_socket.into_split();

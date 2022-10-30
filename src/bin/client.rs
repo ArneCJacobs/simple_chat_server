@@ -29,30 +29,9 @@ async fn main() -> std::result::Result<(), Box<dyn Error>> {
     // use that subscriber to process traces emitted after this point
     tracing::subscriber::set_global_default(subscriber)?;
 
-    // let args: Vec<String> = env::args().collect();
-    // tokio::time::sleep(Duration::from_secs_f64(0.1)).await;
     let shared = Shared;
     let start_state = NotConnected;
     let mut client: StateMachineAsync<ClientSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
-    // let commands = vec![
-    //     Input::ConnectServer(ADDR.to_string()),
-    //     Input::Authenticate(args[1].clone()),
-    //     Input::GetChannelsList,
-    //     Input::ConnectChannel("Welcome".to_string()),
-    //     Input::SendMessage("Hello Chat".to_string()),
-    //     Input::SendMessage("I am new here".to_string()),
-    //     Input::SendMessage("Bye".to_string()),
-    //     Input::Disconnect,
-    // ];
-    //
-    // for command in commands {
-    //     if let Input::SendMessage(_) = command {
-    //         tokio::time::sleep(Duration::from_secs_f64(4.0)).await;
-    //     } 
-    //     tracing::info!("SENDING COMMAND: {:?}" ,command);
-    //     let output = client.transition(command.clone()).await;
-    //     tracing::info!("RESPONSE: {:?}", output);
-    // }
     loop {
         let addr = match prompt("Please provide the server address, or empty for local: ").as_str() {
             "" => ADDR.to_string(),
