@@ -6,7 +6,7 @@ use tokio::{io::AsyncWriteExt, sync::Mutex};
 use crate::{broker::{Broker, BrokerError}, impl_send_receive};
 use super::{ProtocolPackage, SendReceiveError, TcpStream};
 
-// ### STATES ###
+// TODO: remove usage of Arc<Mutex<TcpStream>> in all server states and replace with split_stream
 #[derive(Debug)]
 pub struct ClientConnection{ 
     pub socket: Arc<Mutex<TcpStream>>,

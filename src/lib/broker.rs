@@ -7,6 +7,9 @@ use crate::protocol::{ProtocolPackage, ProtocolPackageSender, Connection, SendRe
 
 type TcpStreamKeyString = String;
 
+// TODO: replace Connection with split_tcp stream 
+// TODO: to make sure that broker doesn't have to be put into a Arc<Mutex<_>> to be used, create a
+// wrapper handler for it instead: https://tokio.rs/tokio/tutorial/shared-state#spawn-a-task-to-manage-the-state-and-use-message-passing-to-operate-on-it 
 #[derive(Debug)]
 pub struct Broker { 
     channels: HashMap<String, Vec<Connection>>,

@@ -116,6 +116,7 @@ impl_protocol_package_reader!(TcpStream, OwnedReadHalf);
 impl HasServerConnection for TcpStream {}
 
 // TODO: make a handler for a TCP stream see: https://tokio.rs/tokio/tutorial/shared-state#spawn-a-task-to-manage-the-state-and-use-message-passing-to-operate-on-it
+// TODO: replace usages of Connection with split_stream;
 pub type Connection = Arc<Mutex<TcpStream>>;
 
 #[async_trait]
@@ -143,6 +144,7 @@ impl ProtocolPackageSender for Connection {
     }
 }
 
+// TODO: move this and trait impls into different file
 pub struct FilteredTcpStream {
     socket: OwnedWriteHalf,
     receiver: Receiver<Result<ProtocolPackage, SendReceiveError>>
@@ -180,6 +182,7 @@ impl FilteredTcpStream {
     }
 }
 
+// TODO: move into different file
 #[macro_export]
 macro_rules! impl_send_receive {
     ( $reaction:ty, $not_connected:ident, $($x:ty),* ) => {
