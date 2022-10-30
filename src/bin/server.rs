@@ -1,64 +1,36 @@
-use std::time::Duration;
-use std::{env, sync::Arc};
-use std::error::Error;
-
-mod protocol;
-mod broker;
-
-use broker::Broker;
+use rust_state_machine::{StateMachineAsync, StatefulAsyncStateMachine};
+use simple_chat_protocol::broker::Broker;
+use simple_chat_protocol::protocol::server::{ClientConnection, SharedContext, ServerSideConnectionSM, Reaction};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tracing::Level;
+use std::error::Error;
+use std::sync::Arc;
 
-use crate::protocol::client::{ClientSideConnectionSM, Input, NotConnected, Shared};
-use crate::protocol::server::{ClientConnection, Reaction, ServerSideConnectionSM, SharedContext};
-use rust_state_machine::{StateMachineAsync, StatefulAsyncStateMachine};
+// use simple_chat_protocol::broker::Broker;
 
+// use crate::protocol::server::{ClientConnection, Reaction, ServerSideConnectionSM, SharedContext};
+//
+//
 const ADDR: &str = "127.0.0.1:8080";
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn Error>> {
     // construct a subscriber that prints formatted traces to stdout
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .without_time()
         .with_target(false)
         .finish();
-    // use that subscriber to process traces emitted after this point
+
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let args: Vec<String> = env::args().collect();
-    // TODO: separate bins
-    if args[1] == "listen" {
-        tracing::info!("Listening on {}", ADDR);
-        let mut server = ChatServer::new(ADDR.to_string()).await.unwrap();
-        server.listen().await;
-    } else {
-        tokio::time::sleep(Duration::from_secs_f64(0.1)).await;
-        tracing::info!("Streaming to {}", ADDR);
-        let shared = Shared;
-        let start_state = NotConnected;
-        let mut client: StateMachineAsync<ClientSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
-        let commands = vec![
-            Input::ConnectServer(ADDR.to_string()),
-            Input::Authenticate("Steam".to_string()),
-            Input::GetChannelsList,
-            Input::ConnectChannel("Welcome".to_string()),
-            Input::SendMessage("Hello Chat".to_string()),
-            Input::SendMessage("I am new here".to_string()),
-            Input::Disconnect,
-        ];
+    tracing::info!("Listening on {}", ADDR);
+    let mut server = ChatServer::new(ADDR.to_string()).await.unwrap();
+    server.listen().await;
 
-        for command in commands {
-            tracing::info!("SENDING COMMAND: {:?}" ,command);
-            let output = client.transition(command.clone()).await;
-            tracing::info!("RESPONSE: {:?}", output);
-        }
-        tracing::info!("DONE");
-    }
     Ok(())
 }
-
 
 struct ChatServer {
     socket: TcpListener,

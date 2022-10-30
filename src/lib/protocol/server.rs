@@ -1,10 +1,10 @@
-use crate::protocol::HasServerConnection;
+use crate::protocol::{ProtocolPackageSender, ProtocolPackageReader};
 use std::{sync::Arc, fmt::Debug};
 
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
-use tokio::io::AsyncWriteExt;
-use crate::{TcpStream, Mutex, broker::{Broker, BrokerError}, impl_send_receive};
-use super::{ProtocolPackage, SendReceiveError};
+use tokio::{io::AsyncWriteExt, sync::Mutex};
+use crate::{broker::{Broker, BrokerError}, impl_send_receive};
+use super::{ProtocolPackage, SendReceiveError, TcpStream};
 
 // ### STATES ###
 #[derive(Debug)]

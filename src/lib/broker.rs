@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 
-use crate::protocol::{ProtocolPackage, HasServerConnection, Connection, SendReceiveError};
+use crate::protocol::{ProtocolPackage, ProtocolPackageSender, Connection, SendReceiveError};
 
 type TcpStreamKeyString = String;
 

@@ -1,24 +1,28 @@
 use std::sync::Arc;
 
-use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context};
+use rust_state_machine::{AsyncProgress, ToStatesAndOutput, state_machine, with_context, AsyncToStatesAndOutput, async_with_context};
 use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::OwnedReadHalf;
 use tokio::sync::{Mutex, mpsc};
+use tokio::task::{JoinHandle, JoinError};
 use crate::{broker::BrokerError, impl_send_receive};
 
-use crate::TcpStream;
+use super::TcpStream;
 
 use super::{Connection, FilteredTcpStream};
-use super::{HasServerConnection, ProtocolPackage, SendReceiveError};
+use super::{HasServerConnection ,ProtocolPackageSender, ProtocolPackageReader, ProtocolPackage, SendReceiveError};
 
 
 // ### STATES ###
 #[derive(Clone, Debug)]
 pub struct NotConnected;
 #[derive(Debug)]
-pub struct ServerConnected { server_socket: Connection }
+pub struct ServerConnected { 
+    server_socket: TcpStream 
+}
 #[derive(Debug)]
 pub struct ServerConnectedAuthenticated { 
-    server_socket: Connection, 
+    server_socket: TcpStream, 
     username: String 
 }
 
@@ -27,6 +31,7 @@ pub struct ServerChannelConnected {
     server_socket: FilteredTcpStream,
     channel: String,
     username: String,
+    handle: JoinHandle<OwnedReadHalf>,
 }
 
 // TODO: replace with with ()
@@ -53,7 +58,6 @@ pub enum Reaction {
     InvalidCommand,
     Success,
     Deny { error: BrokerError }
-    // message from chat, disconnection notice, etc
 }
 
 state_machine! {
@@ -93,7 +97,7 @@ impl AsyncProgress<NotConnectedEdges, ClientSideConnectionSM> for NotConnected {
         };
 
         let server_connection = with_context!(TcpStream::connect(server_addres).await, self);
-        let server_connection = Arc::new(Mutex::new(server_connection));
+        // let server_connection = Arc::new(Mutex::new(server_connection));
         let new_state = ServerConnected { server_socket: server_connection };
         Some((new_state.into(), Reaction::Success))
     } 
@@ -136,11 +140,11 @@ impl ServerConnectedAuthenticated {
                 let (s1, r1) = mpsc::channel(1);
                 // TODO: replace with a user given sink
                 let (s2, mut r2) = mpsc::channel(1);
-                let mut socket_copy = self.server_socket.clone();
-                tokio::spawn(async move {
+                let (mut reader, writer) = self.server_socket.into_split();
+                let handle = tokio::spawn(async move {
                     loop {
                         let package = tokio::select! {
-                            res = socket_copy.receive_package() => res,
+                            res = reader.receive_package() => res,
                             _ = s1.closed() => break
                         };
 
@@ -155,6 +159,7 @@ impl ServerConnectedAuthenticated {
 
                     std::mem::drop(s1);
                     std::mem::drop(s2);
+                    reader
                 });
                 
                 tokio::spawn(async move {
@@ -164,12 +169,13 @@ impl ServerConnectedAuthenticated {
                 });
 
                 let filtered_tcp_stream = FilteredTcpStream {
-                    socket: self.server_socket,
+                    socket: writer,
                     receiver: r1,
                 };
                 let new_state = ServerChannelConnected {
                     server_socket: filtered_tcp_stream,
                     username: self.username,
+                    handle,
                     channel,
                 };
                 Some((new_state.into(), Reaction::Success))
@@ -220,8 +226,13 @@ impl ServerChannelConnected {
         let reply = with_context!(self.server_socket.send_package_and_receive(message).await, self); 
         match reply {
             ProtocolPackage::Accept => {
+                let socket = match self.server_socket.get_tcp_connection(self.handle).await {
+                    Ok(val) => val,
+                    Err(_) => return Some((NotConnected.into(), Reaction::LostConnection)), 
+                };
+                
                 let new_state = ServerConnectedAuthenticated {
-                    server_socket: self.server_socket.get_unfiltered(),
+                    server_socket: socket,
                     username: self.username,
                 };
                 Some((new_state.into(), Reaction::Success)) 
@@ -239,13 +250,13 @@ trait Disconnect<T: Send> {
 } 
 
 #[::rust_state_machine::async_trait::async_trait]
-impl<D: From<NotConnected> + Send> Disconnect<D> for Connection 
+impl<D: From<NotConnected> + Send> Disconnect<D> for TcpStream 
 {
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
         match self.send_package(message).await {
             Ok(_) => {
-                match self.lock_owned().await.shutdown().await {
+                match self.shutdown().await {
                     Ok(_) => Some((NotConnected.into(), Reaction::Success)),
                     Err(error) => Some((NotConnected.into(), Reaction::IoError(error)))
                 }
@@ -256,20 +267,17 @@ impl<D: From<NotConnected> + Send> Disconnect<D> for Connection
 }
 
 #[::rust_state_machine::async_trait::async_trait]
-impl<D: From<NotConnected> + Send> Disconnect<D> for FilteredTcpStream {
-    async fn disconnect(mut self) -> Option<(D, Reaction)> {
-        self.get_unfiltered().disconnect().await
-    }
-} 
-
-#[::rust_state_machine::async_trait::async_trait]
 impl AsyncProgress<ServerChannelConnectedEdges, ClientSideConnectionSM> for ServerChannelConnected {
     async fn transition(self, _shared: &mut Shared, input: Input) -> Option<(ServerChannelConnectedEdges, Reaction)> {
         match input {
             Input::SendMessage(message) => self.send_message(message).await,
             Input::DisconnectChannel => self.disconnect_channel().await,
             Input::Disconnect => {
-                self.server_socket.disconnect().await
+                let tcp_connection = self.server_socket.get_tcp_connection(self.handle).await;
+                match tcp_connection {
+                    Ok(conn) => conn.disconnect().await,
+                    Err(_) => Some((NotConnected.into(), Reaction::LostConnection)) 
+                }
             },
             _ => Some((self.into(), Reaction::InvalidCommand))
         }
