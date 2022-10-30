@@ -142,9 +142,16 @@ impl From<Box<bincode::ErrorKind>> for Reaction {
     }
 }
 
-impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthenticatedEdges, Reaction> for Box<bincode::ErrorKind> {
+impl ToStatesAndOutput<ClientConnectionAuthenticated, ClientConnectionAuthenticatedEdges, Reaction> for SendReceiveError {
     fn context(self, state: ClientConnectionAuthenticated) -> (ClientConnectionAuthenticatedEdges, Reaction) {
-        (state.into(), self.into())
+        match self {
+            SendReceiveError::BinError(_) => (state.into(), self.into()),
+            SendReceiveError::IoError(ref error) => match error.kind() {
+                std::io::ErrorKind::NotFound => (state.into(), self.into()),
+                _ => panic!("Should never be reached")
+            }
+        }
+        
     }
 }
 
@@ -253,25 +260,27 @@ impl ClientChannelConnection {
 
     pub async fn shutdown(self, intentional: bool) {
         let mut guard = self.broker.lock().await;
-        guard.unsubscribe(&self.channel, &self.socket).await;
+        guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
         guard.deregister_username(&self.username);
 
 
         self.socket.lock_owned().await.shutdown().await.ok(); // Don't care if successful or not, either way the channel
         // will be disconnected
-
-        let message_text = if intentional {
-            format!("{} DISCONNECTED", self.username)
-        } else {
-            format!("{} LOST CONNECTION", self.username)
-        };
-        let message = ProtocolPackage::ChatMessageReceive { 
-            username: "CHANNEL".to_string(), 
-            message: message_text 
-        };
  
-        guard.notify(&self.channel, message).await
-            .expect("Could not serialize message");
+        if guard.get_channels().contains(&self.channel) {
+            let message_text = if intentional {
+                format!("{} DISCONNECTED", self.username)
+            } else {
+                format!("{} LOST CONNECTION", self.username)
+            };
+            let message = ProtocolPackage::ChatMessageReceive { 
+                username: "CHANNEL".to_string(), 
+                message: message_text 
+            };
+
+            guard.notify(&self.channel, message).await
+                .expect("Could not serialize message");
+        }
 
         std::mem::drop(guard);
     }
@@ -285,7 +294,7 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
             ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
             ProtocolPackage::ChannelDisconnectNotification => {
                 let mut guard = shared.broker.lock().await;
-                guard.unsubscribe(&self.channel, &self.socket).await;
+                guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
                 std::mem::drop(guard);
                 let new_state = ClientConnectionAuthenticated {
                     username: self.username,

@@ -16,7 +16,7 @@ else
     # if a window is not created, create setup and run commands
     tmux new-window -n $SESSION_NAME \; split-window -t $SESSION_NAME -h 
     tmux set-option -wt $SESSION_NAME remain-on-exit on
-    tmux select-pane -t 1 \; respawn-pane -k 'cargo run listen' \; select-pane -t 2 \; respawn-pane -k 'cargo run speak'
+    tmux select-pane -t 1 \; respawn-pane -k 'RUST_BACKTRACE=1 cargo run listen' \; select-pane -t 2 \; respawn-pane -k 'cargo run speak'
   fi
   tmux select-window -t "$LAST"
 fi

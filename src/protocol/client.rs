@@ -134,7 +134,7 @@ impl ServerConnectedAuthenticated {
             ProtocolPackage::Deny{ error } => Some((self.into(), Reaction::Deny{ error })),
             ProtocolPackage::Accept => {
                 let (s1, r1) = mpsc::channel(1);
-                // let (s2, mut r2) = mpsc::channel(1);
+                let (s2, mut r2) = mpsc::channel(1);
                 let mut socket_copy = self.server_socket.clone();
                 // TODO:
                 tokio::spawn(async move {
@@ -146,11 +146,11 @@ impl ServerConnectedAuthenticated {
                         };
                         // tracing::debug!("X IN FILTER THREAD");
 
-                        if let Ok(_new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
+                        if let Ok(new_package @ ProtocolPackage::ChatMessageReceive { .. }) = package {
                             // tracing::debug!("2 IN FILTER THREAD");
-                            // if s2.send(new_package).await.is_err() {
-                                // break;
-                            // }
+                            if s2.send(new_package).await.is_err() {
+                                break;
+                            }
                         } else {
                             // tracing::debug!("3 IN FILTER THREAD");
                             if s1.send(package).await.is_err() {
@@ -160,14 +160,14 @@ impl ServerConnectedAuthenticated {
                     }
 
                     std::mem::drop(s1);
-                    // std::mem::drop(s2);
+                    std::mem::drop(s2);
                 });
                 
-                // tokio::spawn(async move {
-                //     while let Some(package) = r2.recv().await {
-                //         tracing::info!("RECEIVED MESSAGE: {:?}", package);
-                //     }
-                // });
+                tokio::spawn(async move {
+                    while let Some(package) = r2.recv().await {
+                        tracing::info!("RECEIVED MESSAGE: {:?}", package);
+                    }
+                });
 
                 let filtered_tcp_stream = FilteredTcpStream {
                     socket: self.server_socket,
@@ -249,9 +249,6 @@ impl<D: From<NotConnected> + Send> Disconnect<D> for Connection
 {
     async fn disconnect(mut self) -> Option<(D, Reaction)> {
         let message = ProtocolPackage::DisconnectNotification;
-        tracing::warn!("DISCONNECTING AND ALL THAT");  
-        
-        tracing::warn!("MUTEX IS TAKEN: {:?}", self.try_lock());
         match self.send_package(message).await {
             Ok(_) => {
                 match self.lock_owned().await.shutdown().await {

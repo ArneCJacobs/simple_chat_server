@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 
-use crate::protocol::{ProtocolPackage, HasServerConnection, Connection};
+use crate::protocol::{ProtocolPackage, HasServerConnection, Connection, SendReceiveError};
 
 type TcpStreamKeyString = String;
 
@@ -63,27 +63,37 @@ impl Broker {
 
     // TODO: if channel is empty, remove channel
     // TODO: send message to the channel that the user has left
-    pub async fn unsubscribe(&mut self, channel: &String, listener: &Connection) {
+    pub async fn unsubscribe(&mut self, channel: &String, listener: &Connection, username: &String) {
         let key_string = Broker::get_key(&listener.lock().await.peer_addr());
         if !self.backwards.contains_key(&key_string){
             return;
         }
         self.backwards.remove(&key_string);
         let listeners = self.channels.get_mut(channel).unwrap();
-        // let index = listeners.iter()
-        //     .position(|x| Broker::get_key(&x.lock().await.peer_addr()) == key_string).unwrap();
         for (index, x) in listeners.iter().enumerate() {
             let key = Broker::get_key(&x.lock().await.peer_addr());
             if key == key_string {
                 listeners.remove(index);
+                if listeners.is_empty() {
+                    self.channels.remove(channel);
+                } else {
+                    let message = ProtocolPackage::ChatMessageReceive { 
+                        username: "CHANNEL".to_string(), 
+                        message: format!("{} HAS LEFT THE CHANNEL", username) 
+                    };
+                    self.notify(channel, message).await.ok();
+                }
                 break;
             }
         }
     }
 
-    pub async fn notify(&mut self, channel: &String, message: ProtocolPackage) -> Result<(), Box<bincode::ErrorKind>> {
+    pub async fn notify(&mut self, channel: &String, message: ProtocolPackage) -> Result<(), SendReceiveError> {
         let serialized = bincode::serialize(&message)?;
-        let listeners = self.channels.get_mut(channel).unwrap();
+        let listeners = match self.channels.get_mut(channel) {
+            Some(listeners) => listeners,
+            None => return Err(SendReceiveError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "Channel does not exists")))
+        };
         // error are intentionally ignored as they need to be handled by SM which actually owns and
         // handles the TcpConnection
         let futures: Vec<_> = listeners.iter_mut()
