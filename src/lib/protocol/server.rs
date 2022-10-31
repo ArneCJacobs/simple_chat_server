@@ -305,6 +305,8 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
         match input {
             ProtocolPackage::ChatMessageSend{ message } => self.send_message(shared, message).await, 
             ProtocolPackage::ChannelDisconnectNotification => {
+                let message = ProtocolPackage::Accept;
+                with_context!(self.socket.send_package(message).await, self);
                 let mut guard = shared.broker.lock().await;
                 guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
                 std::mem::drop(guard);

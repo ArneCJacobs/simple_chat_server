@@ -84,12 +84,6 @@ impl Broker {
                 listeners.remove(index);
                 if listeners.is_empty() {
                     self.channels.remove(channel);
-                } else {
-                    let message = ProtocolPackage::ChatMessageReceive { 
-                        username: "CHANNEL".to_string(), 
-                        message: format!("{} HAS LEFT THE CHANNEL", username) 
-                    };
-                    self.notify(channel, message).await.ok();
                 }
                 break;
             }
