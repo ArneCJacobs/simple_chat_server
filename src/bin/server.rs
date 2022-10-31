@@ -1,6 +1,7 @@
 use rust_state_machine::{StateMachineAsync, StatefulAsyncStateMachine};
 use simple_chat_protocol::broker::Broker;
 use simple_chat_protocol::protocol::server::{ClientConnection, SharedContext, ServerSideConnectionSM, Reaction};
+use simple_chat_protocol::protocol::util::split_stream::SplitStream;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tracing::Level;
@@ -59,7 +60,7 @@ impl ChatServer {
         let peer_addr = stream.peer_addr();
         tracing::info!("NEW CONNECTION: {:?}", peer_addr);
         let shared = SharedContext { broker: broker.clone() };
-        let stream = Arc::new(Mutex::new(stream));
+        let stream = SplitStream::new(stream).await;
         let start_state = ClientConnection{ socket: stream };
         let mut server_side_sm: StateMachineAsync<ServerSideConnectionSM> = StatefulAsyncStateMachine::init(shared, start_state);
         let mut result = None;

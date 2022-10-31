@@ -1,10 +1,11 @@
 use async_trait::async_trait;
-use tokio::{task::JoinHandle, net::{tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream}, sync::{mpsc::{Sender, self}, oneshot}};
+use tokio::{task::JoinHandle, net::{tcp::{OwnedWriteHalf, OwnedReadHalf}, TcpStream}, sync::mpsc::{Sender, self}};
 use std::result::Result as StdResult;
 
 use crate::protocol::{ProtocolPackageSender, ProtocolPackage, SendReceiveError, ProtocolPackageReader, HasServerConnection};
 
-struct SplitStream {
+#[derive(Debug)]
+pub struct SplitStream {
     handle: JoinHandle<OwnedWriteHalf>,
     reader: OwnedReadHalf,
     sender: Sender<ProtocolPackage>,
@@ -12,13 +13,12 @@ struct SplitStream {
 }
 
 impl SplitStream {
-    async fn new(stream: TcpStream) -> Self {
+    pub async fn new(stream: TcpStream) -> Self {
         let (reader, mut writer) = stream.into_split();
         let (sender, mut receiver) = mpsc::channel(10);
         let (kill_sender, mut kill_receiver) = mpsc::channel::<()>(1);
         let handle = tokio::spawn(async move {
             loop {
-                let package = receiver.recv().await;
                 let package = tokio::select! {
                     val = receiver.recv() => val,
                     _ = kill_receiver.recv() => {
@@ -48,14 +48,21 @@ impl SplitStream {
         }
     }
 
-    fn get_sender_clone(&self) -> Sender<ProtocolPackage> {
+    #[inline]
+    pub fn get_sender_clone(&self) -> Sender<ProtocolPackage> {
         self.sender.clone()
     }
 
-    async fn unsplit(mut self) -> TcpStream {
+    #[inline]
+    pub async fn unsplit(self) -> TcpStream {
         self.kill_sender.send(()).await.unwrap();
         let writer = self.handle.await.unwrap();
         self.reader.reunite(writer).unwrap()
+    }
+
+    #[inline]
+    pub fn get_stream_identifier(&self) -> String {
+        self.reader.peer_addr().unwrap().to_string()
     }
 }
 

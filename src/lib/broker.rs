@@ -1,19 +1,21 @@
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use futures::future::join_all;
 use serde::{Serialize, Deserialize};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::SendError;
 
-use crate::protocol::{ProtocolPackage, ProtocolPackageSender, Connection, SendReceiveError};
+use crate::protocol::util::split_stream::SplitStream;
+use crate::protocol::{ProtocolPackage, SendReceiveError};
 
-type TcpStreamKeyString = String;
+type ConnectionIdentifier = String;
 
 // TODO: replace Connection with split_tcp stream 
 // TODO: to make sure that broker doesn't have to be put into a Arc<Mutex<_>> to be used, create a
 // wrapper handler for it instead: https://tokio.rs/tokio/tutorial/shared-state#spawn-a-task-to-manage-the-state-and-use-message-passing-to-operate-on-it 
 #[derive(Debug)]
 pub struct Broker { 
-    channels: HashMap<String, Vec<Connection>>,
-    backwards: HashMap<TcpStreamKeyString, String>,
+    channels: HashMap<String, Vec<(ConnectionIdentifier, Sender<ProtocolPackage>)>>, // channel name to channel listeners
+    backwards: HashMap<ConnectionIdentifier, String>, // connection identifier to channel name
     usernames: HashSet<String>,
 }
 
@@ -26,6 +28,16 @@ pub enum BrokerError {
     AlreadySubscribed{ channel: String },
 }
 
+impl From<SendError<ProtocolPackage>> for SendReceiveError {
+    fn from(_error: SendError<ProtocolPackage>) -> Self {
+        SendReceiveError::IoError(
+            std::io::Error::new(
+                std::io::ErrorKind::Other, 
+                "package failed to send"
+            )
+        )
+    }
+}
 
 impl Broker {
     pub fn new() -> Self {
@@ -42,38 +54,33 @@ impl Broker {
             .collect()
     }
 
-    #[inline]
-    fn get_key(listener: &std::io::Result<SocketAddr>) -> String {
-        format!("{:?}", listener)
-    }
-
-    pub async fn subscribe(&mut self, channel: String, listener: Connection) ->  Result<(), BrokerError>{
-        let key_string = Broker::get_key(&listener.lock().await.peer_addr());
+    pub async fn subscribe(&mut self, channel: String, listener: &SplitStream) ->  Result<(), BrokerError>{
+        let key_string = listener.get_stream_identifier();
         let res = self.backwards.get(&key_string);
         if let Some(current_channel) = res {
             return Err(BrokerError::AlreadySubscribed{ channel: current_channel.clone() });
         } 
+        let value = (key_string.clone(), listener.get_sender_clone());
         if self.channels.contains_key(&channel) {
             self.channels.get_mut(&channel)
                 .unwrap()
-                .push(listener);
+                .push(value);
         } else {
-           self.channels.insert(channel.clone(), vec![listener]);
+           self.channels.insert(channel.clone(), vec![value]);
         }
         self.backwards.insert(key_string, channel);
         Ok(())
     }
 
-    pub async fn unsubscribe(&mut self, channel: &String, listener: &Connection, username: &String) {
-        let key_string = Broker::get_key(&listener.lock().await.peer_addr());
+    pub async fn unsubscribe(&mut self, channel: &String, listener: &SplitStream, username: &String) {
+        let key_string = listener.get_stream_identifier();
         if !self.backwards.contains_key(&key_string){
             return;
         }
         self.backwards.remove(&key_string);
         let listeners = self.channels.get_mut(channel).unwrap();
-        for (index, x) in listeners.iter().enumerate() {
-            let key = Broker::get_key(&x.lock().await.peer_addr());
-            if key == key_string {
+        for (index, (key, _)) in listeners.iter().enumerate() {
+            if *key == key_string {
                 listeners.remove(index);
                 if listeners.is_empty() {
                     self.channels.remove(channel);
@@ -93,12 +100,19 @@ impl Broker {
         // let serialized = bincode::serialize(&message)?;
         let listeners = match self.channels.get_mut(channel) {
             Some(listeners) => listeners,
-            None => return Err(SendReceiveError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "Channel does not exists")))
+            None => return Err(
+                SendReceiveError::IoError(
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound, 
+                        "Channel does not exists"
+                    )
+                )
+            )
         };
         // error are intentionally ignored as they need to be handled by SM which actually owns and
         // handles the TcpConnection
         let futures: Vec<_> = listeners.iter_mut()
-            .map(|listener| listener.send_package(message.clone()))
+            .map(|(_, listener)| listener.send(message.clone()))
             .collect();
 
         for result in join_all(futures).await {

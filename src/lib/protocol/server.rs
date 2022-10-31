@@ -4,23 +4,23 @@ use std::{sync::Arc, fmt::Debug};
 use rust_state_machine::{AsyncProgress, ToStatesAndOutput, AsyncToStatesAndOutput, state_machine, with_context, async_with_context};
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 use crate::{broker::{Broker, BrokerError}, impl_send_receive};
-use super::{ProtocolPackage, SendReceiveError, TcpStream};
+use super::{ProtocolPackage, SendReceiveError, util::split_stream::SplitStream};
 
 // TODO: remove usage of Arc<Mutex<TcpStream>> in all server states and replace with split_stream
 #[derive(Debug)]
 pub struct ClientConnection{ 
-    pub socket: Arc<Mutex<TcpStream>>,
+    pub socket: SplitStream,
 }
 #[derive(Debug)]
 pub struct ClientConnectionAuthenticated{ 
     broker: Arc<Mutex<Broker>>,
-    socket: Arc<Mutex<TcpStream>>,
+    socket: SplitStream,
     username: String 
 }
 #[derive(Debug)]
 pub struct ClientChannelConnection{ 
     broker: Arc<Mutex<Broker>>,
-    socket: Arc<Mutex<TcpStream>>,
+    socket: SplitStream,
     username: String, 
     channel: String 
 }
@@ -172,7 +172,7 @@ impl ClientConnectionAuthenticated {
     async fn join_channel(mut self, shared: &mut SharedContext, channel: String) -> Option<(ClientConnectionAuthenticatedEdges, Reaction)> 
     {
         let mut guard = shared.broker.lock().await;
-        let res = guard.subscribe(channel.clone(), self.socket.clone()).await;
+        let res = guard.subscribe(channel.clone(), &self.socket).await;
         drop(guard);
         if let Err(error) = res {
             let message = ProtocolPackage::Deny{ error: error.clone() };
@@ -200,8 +200,11 @@ impl ClientConnectionAuthenticated {
     }
 
     pub async fn shutdown(self) {
-        self.socket.lock_owned().await.shutdown().await.ok();  // Don't care if successful or not, either way the channel
+        // Don't care if successful or not, either way the channel
         // will be disconnected
+        self.socket.unsplit().await
+            .shutdown().await
+            .ok();
         let mut guard = self.broker.lock().await;
         guard.deregister_username(&self.username);
     }
@@ -270,9 +273,11 @@ impl ClientChannelConnection {
         guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
         guard.deregister_username(&self.username);
 
-
-        self.socket.lock_owned().await.shutdown().await.ok(); // Don't care if successful or not, either way the channel
+        // Don't care if successful or not, either way the channel
         // will be disconnected
+        self.socket.unsplit().await
+            .shutdown().await
+            .ok();
  
         if guard.get_channels().contains(&self.channel) {
             let message_text = if intentional {
