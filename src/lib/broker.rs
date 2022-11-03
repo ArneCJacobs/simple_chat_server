@@ -72,7 +72,7 @@ impl Broker {
         Ok(())
     }
 
-    pub async fn unsubscribe(&mut self, channel: &String, listener: &SplitStream, username: &String) {
+    pub async fn unsubscribe(&mut self, channel: &String, listener: &SplitStream) {
         let key_string = listener.get_stream_identifier();
         if !self.backwards.contains_key(&key_string){
             return;

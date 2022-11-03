@@ -270,7 +270,7 @@ impl ClientChannelConnection {
 
     pub async fn shutdown(self, intentional: bool) {
         let mut guard = self.broker.lock().await;
-        guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
+        guard.unsubscribe(&self.channel, &self.socket).await;
         guard.deregister_username(&self.username);
 
         // Don't care if successful or not, either way the channel
@@ -308,7 +308,7 @@ impl AsyncProgress<ClientChannelConnectionEdges, ServerSideConnectionSM> for Cli
                 let message = ProtocolPackage::Accept;
                 with_context!(self.socket.send_package(message).await, self);
                 let mut guard = shared.broker.lock().await;
-                guard.unsubscribe(&self.channel, &self.socket, &self.username).await;
+                guard.unsubscribe(&self.channel, &self.socket).await;
                 std::mem::drop(guard);
                 let new_state = ClientConnectionAuthenticated {
                     username: self.username,
